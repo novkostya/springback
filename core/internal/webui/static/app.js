@@ -447,11 +447,16 @@ function renderAppDetail() {
 
   // --- update ---
   //
-  // WHY THIS MATTERS MORE THAN IT LOOKS. An app installed across regions — available in some
-  // storefront but not the one the device's Apple ID belongs to — CANNOT be updated by the App
-  // Store on the device: that account does not own it, so it never appears in Updates. springback
-  // is the only update channel it has, and without this the app is frozen at whatever version
-  // was first archived.
+  // WHAT THIS IS ACTUALLY FOR, stated accurately after being checked on a device.
+  //
+  // An app installed from another storefront DOES appear in the App Store's own Updates list —
+  // it is not stranded. What happens is that updating it prompts "Sign In to the App Store" for
+  // the Apple ID that OWNS it, which is not the one the device is signed into. So the App Store
+  // route works if you have that password and are willing to type it on the phone, every time.
+  //
+  // Updating from here needs neither: springback already holds that account's session, and the
+  // install is a plain install. That is a smaller claim than "the only way to update it" — which
+  // is what this comment said first, and it was wrong.
   if (item) {
     const upd = el("div", { className: "actions-block" });
     // Two sources for the current store version, because this screen is reached two ways: from a
@@ -477,8 +482,8 @@ function renderAppDetail() {
         el("p", { className: "hint", textContent:
           known
             ? `Up to date — the App Store has ${storeVersion} and so do you.`
-            : "Re-download to pick up a newer version, if there is one. An app installed from another region " +
-              "cannot update itself on the device: its App Store account does not own it." }),
+            : "Re-download to pick up a newer version, if there is one. Updating an app from another " +
+              "storefront here avoids the App Store's prompt for the owning Apple ID's password." }),
         (() => {
           const b = el("button", { className: "danger wide", textContent: "Re-download latest" });
           b.onclick = () => archive(item.id, pickedAccount(null), item.name, b);
@@ -619,9 +624,8 @@ function jobFor(key) {
 
 // installedOn: udid -> Map of bundle id -> installed version.
 //
-// The VERSION is what turns "installed" into "out of date". A cross-region app cannot be updated
-// from the device's own App Store, so the only way anyone learns their copy is behind is if this
-// screen says so.
+// The VERSION is what turns "installed" into "out of date" — otherwise a row saying "installed"
+// is silent about a device sitting three versions behind the library copy.
 const installedOn = new Map();
 const installedLoading = new Set();
 

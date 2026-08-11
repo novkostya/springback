@@ -77,9 +77,13 @@ type StoreLookup struct {
 	Found     bool
 	TrackID   int64
 	TrackName string
-	// Version is what the store currently sells. It is the only way to know a library copy
-	// has gone stale — and for an app installed across regions it is the only way at all,
-	// since the device's own App Store cannot update an app its account does not own.
+	// Version is what the store currently sells, and the only way to know a library copy has
+	// gone stale.
+	//
+	// (An earlier version of this comment claimed the App Store cannot update an app installed
+	// from another storefront. Checked on a device: it can — the app appears in Updates and
+	// iOS prompts for the owning Apple ID's password. Updating from springback avoids that
+	// prompt; it is not the only route.)
 	Version     string
 	ReleaseDate string
 	Err         error
