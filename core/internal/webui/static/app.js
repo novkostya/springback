@@ -388,7 +388,7 @@ function renderAppDetail() {
   // An app that is installed on a device but not archived gets the plain heading — which is
   // honest: there is no file here to take an icon from yet.
   const hero = item
-    ? el("div", { className: "detail-hero" }, [appIcon(item.id, title, "lg"), head])
+    ? el("div", { className: "detail-hero" }, [appIcon(item.id, title, "lg", item.downloaded_at), head])
     : head;
 
   const blocks = [back, hero, el("dl", { className: "facts" }, facts)];
@@ -714,6 +714,24 @@ async function archive(appID, slug, label, btn) {
 // Icons
 // ---------------------------------------------------------------------------
 
+// tiles caches the icon element per app, keyed by `<id>:<size>`.
+//
+// THIS IS WHAT STOPS THE ICONS FLICKERING, and the flicker was not subtle: every screen is drawn
+// with replaceChildren, and the job poll redraws the current screen ONCE A SECOND for the whole
+// length of a download or install. Each redraw built a new <img>, and a new element starts
+// without the `loaded` class no matter how thoroughly the browser has the file — measured
+// immediately after a redraw as `complete=true, opacity=0`. So every icon on screen replayed its
+// 180ms fade-in every second, for minutes at a time.
+//
+// Handing back the SAME NODE fixes it at the root: replaceChildren re-parents an existing
+// element rather than replacing it, which does not reload, re-decode or restyle the image.
+// Nothing about it is in flight, so there is nothing to fade.
+//
+// The invariant this relies on: one (id, size) pair appears at most once in any single render. A
+// DOM node cannot be in two places, so a second use would silently steal it from the first.
+// Holds today — the list uses `sm`, the detail hero uses `lg`, one row per app.
+const tiles = new Map();
+
 // appIcon returns the icon tile for a library app: the real artwork if the archive had any, and
 // a lettered tile if not.
 //
@@ -726,9 +744,26 @@ async function archive(appID, slug, label, btn) {
 // A 404 is expected, not exceptional: the server has already looked inside the archive and found
 // nothing, and it says so in a fraction of the time it takes to fail a download. `onerror` just
 // leaves the monogram showing.
-function appIcon(id, name, size) {
+//
+// `version` is the item's download timestamp. It is in the cache key AND in the URL so that
+// re-downloading an app that has since rebranded actually shows the new icon: without it, the
+// cached node would keep the old image and the browser would keep serving the old bytes from the
+// unchanged URL.
+function appIcon(id, name, size, version) {
+  const kind = size || "sm";
   const letter = (String(name || "?").trim()[0] || "?").toUpperCase();
-  const tile = el("div", { className: `app-icon app-icon-${size || "sm"}` }, [
+  const key = `${id || 0}:${kind}`;
+  const stamp = version || "";
+
+  const cached = id ? tiles.get(key) : null;
+  if (cached && cached.stamp === stamp) {
+    // The name can change under a fixed id when an update rewrites meta.json, and the
+    // monogram is still visible for apps with no artwork.
+    cached.tile.querySelector(".app-icon-letter").textContent = letter;
+    return cached.tile;
+  }
+
+  const tile = el("div", { className: `app-icon app-icon-${kind}` }, [
     el("span", { className: "app-icon-letter", textContent: letter }),
   ]);
   if (!id) return tile;
@@ -740,10 +775,15 @@ function appIcon(id, name, size) {
     // icon as well would read every app twice.
     loading: "lazy",
     decoding: "async",
-    src: `/api/library/${id}/icon.png`,
+    src: `/api/library/${id}/icon.png${stamp ? `?v=${encodeURIComponent(stamp)}` : ""}`,
   });
   img.onload = () => img.classList.add("loaded");
+  // An image already in the browser's cache can be complete the moment it is created. Waiting
+  // for a load event that has already fired would leave it invisible forever.
+  if (img.complete && img.naturalWidth > 0) img.classList.add("loaded");
   tile.append(img);
+
+  tiles.set(key, { stamp, tile });
   return tile;
 }
 
@@ -759,7 +799,7 @@ function renderLibrary() {
   const root = $("#screen-library");
   const rows = library.map((it) => {
     const r = el("a", { className: "row", href: `/library/${it.id}` }, [
-      appIcon(it.id, it.name || it.bundle_id, "sm"),
+      appIcon(it.id, it.name || it.bundle_id, "sm", it.downloaded_at),
       el("div", { className: "row-main" }, [
         el("div", { className: "row-title", textContent: it.name || it.bundle_id }),
         el("div", { className: "row-sub", textContent: `${it.version || "—"} · ${fmtSize(it.size)}` }),
