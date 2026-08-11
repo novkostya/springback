@@ -76,6 +76,18 @@
           the prompt is ipatool asking anyway. Nothing to enter; try again later.
         </span>
       </label>
+      <label class="check" for="acc-keep">
+        <input type="checkbox" id="acc-keep" name="keep_trying" checked>
+        <span>
+          Keep retrying while Apple refuses (up to 30 minutes)
+          <span class="hint">
+            Apple is currently rejecting new sign-ins at random — the same attempt returns a
+            different error each time — so one try is mostly luck. This keeps trying on a slowing
+            schedule and stops the moment it works. It holds your password in memory for as long
+            as it runs; it is never written to disk or logged. Untick to try exactly once.
+          </span>
+        </span>
+      </label>
       <button class="primary wide" type="submit" id="acc-submit">Sign in</button>
     </form>
 

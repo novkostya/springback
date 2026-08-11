@@ -42,8 +42,10 @@ type Fake struct {
 	store map[string]map[string]int64
 	// authed tracks which HOME directories have completed login, and pending2FA which are
 	// mid-2FA. `2fa@example.com` is the address that exercises the two-step form.
-	authed    map[string]Account
-	pending   map[string]bool
+	authed  map[string]Account
+	pending map[string]bool
+	// rejects counts simulated Apple refusals per HOME, for the "flaky" fixture.
+	rejects   map[string]int
 	LookupErr map[string]bool
 }
 
@@ -133,6 +135,7 @@ func NewFake() *Fake {
 		},
 		authed:    map[string]Account{},
 		pending:   map[string]bool{},
+		rejects:   map[string]int{},
 		LookupErr: map[string]bool{},
 	}
 	return f
@@ -250,6 +253,18 @@ func (f *Fake) AuthLogin(ctx context.Context, home, passphrase, email, password,
 	if password == "" {
 		return fmt.Errorf("empty password")
 	}
+	// An address containing "flaky" is refused by "Apple" the first few times and then
+	// succeeds — the shape of the real outage, where the same attempt returns 204, then 403,
+	// then works. Without it the persistent sign-in job cannot be exercised on a box with no
+	// Apple ID, which is the one path that only matters when Apple is misbehaving.
+	if strings.Contains(strings.ToLower(email), "flaky") {
+		f.rejects[home]++
+		if n := f.rejects[home]; n <= 3 {
+			return fmt.Errorf("%w: Apple answered HTTP %s", ErrAppleRejected,
+				[]string{"204", "403", "503"}[(n-1)%3])
+		}
+	}
+
 	// Any address containing "2fa" walks the two-step path, so the second form is reachable
 	// on a box with no Apple ID at all.
 	if strings.Contains(strings.ToLower(email), "2fa") && authCode == "" {

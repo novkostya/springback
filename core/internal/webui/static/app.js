@@ -89,7 +89,9 @@ async function pollJobs() {
   const strip = $("#jobs");
   // Downloads keep the top strip — they belong to no row. Installs are drawn IN the device
   // row instead, so showing them twice would be the duplicate-count mistake again.
-  strip.replaceChildren(...runningJobs.filter((j) => j.kind === "download").map(jobRow));
+  // Sign-in jobs also belong in the strip: they have no row of their own and can run for
+  // half an hour, so they need somewhere visible to live.
+  strip.replaceChildren(...runningJobs.filter((j) => j.kind !== "install").map(jobRow));
 
   let finished = false;
   for (const j of list) {
@@ -98,7 +100,10 @@ async function pollJobs() {
     if (was === "running" && j.state !== "running") {
       finished = true;
       if (j.state === "done") {
-        toast(`${j.kind === "install" ? "Installed" : "Archived"} ${j.label}.`);
+        toast(j.kind === "install" ? `Installed ${j.label}.`
+          : j.kind === "signin" ? `Signed in as ${j.label}.`
+          : `Archived ${j.label}.`);
+        if (j.kind === "signin") { await refreshAccounts(); renderAccountsList(); }
         // The library gained an entry, a device's app list may now say "in library",
         // and an installed-app set is now out of date.
         appsCache.clear();
@@ -123,7 +128,9 @@ function jobRow(j) {
   const bar = el("div", { className: "bar" }, [
     el("div", { className: "bar-fill", style: `width:${pct == null ? 0 : pct}%` }),
   ]);
-  const what = j.kind === "install" ? `Installing ${j.label}` : `Downloading ${j.label}`;
+  const what = j.kind === "install" ? `Installing ${j.label}`
+    : j.kind === "signin" ? `Signing in as ${j.label}`
+    : `Downloading ${j.label}`;
   const where = j.target ? ` → ${j.target}` : "";
   return el("div", { className: "job" }, [
     el("div", { className: "job-line" }, [
@@ -748,7 +755,20 @@ $("#signin").addEventListener("submit", async (ev) => {
         method: "POST", body: JSON.stringify({ code, password }),
       });
     } else {
-      await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
+      const keep = $("#acc-keep").checked;
+      const res = await api("/api/accounts", {
+        method: "POST",
+        body: JSON.stringify({ email, password, keep_trying: keep }),
+      });
+      if (keep) {
+        // A background job now owns this. The password stays in the field, because a
+        // verification code may still arrive and finishing that needs the password again.
+        toast(res.detail);
+        startedJob();
+        submit.disabled = false;
+        submit.textContent = "Sign in";
+        return;
+      }
     }
     toast(`Signed in as ${email}.`);
     // Clearing here is deliberate and is the ONLY place it happens: the sign-in succeeded, so

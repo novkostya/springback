@@ -365,6 +365,10 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 type addAccountReq struct {
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	// KeepTrying asks springback to retry the sign-in while Apple is refusing them, instead
+	// of failing on the first refusal. Opt-in, because it holds the password in memory for
+	// the life of the job rather than for one request — see signin.go.
+	KeepTrying bool `json:"keep_trying,omitempty"`
 }
 
 func (s *Server) addAccount(w http.ResponseWriter, r *http.Request) {
@@ -379,6 +383,21 @@ func (s *Server) addAccount(w http.ResponseWriter, r *http.Request) {
 	acc, existed, err := s.Accounts.Create(req.Email)
 	if err != nil {
 		s.fail(w, err)
+		return
+	}
+
+	if req.KeepTrying {
+		// Handed to a background job so it outlives this request. The account record stays
+		// whatever happens: the job owns its lifetime now, and rolling it back here would
+		// delete the HOME the job is signing into.
+		job := s.startPersistentSignIn(acc, req.Password)
+		writeJSON(w, http.StatusAccepted, map[string]any{
+			"job":  job,
+			"slug": acc.Slug,
+			"detail": "Trying to sign in, and retrying while Apple refuses — up to " +
+				signInMaxWindow.String() + ". You can leave this page; progress is at the top. " +
+				"If a verification code arrives on your devices, enter it here and that finishes it.",
+		})
 		return
 	}
 
