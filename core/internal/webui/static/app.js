@@ -64,6 +64,8 @@ const emailForSlug = (slug) => {
 
 let accounts = [];
 let devices = [];
+// devicesLoaded distinguishes "no devices" from "not asked yet" — see renderDevices.
+let devicesLoaded = false;
 let library = [];
 const appsCache = new Map(); // udid -> payload
 let current = "devices";
@@ -158,9 +160,16 @@ function startedJob() {
 
 async function refreshDevices() {
   devices = await api("/api/devices");
+  devicesLoaded = true;
 }
 
 function renderDevices() {
+  // NOT LOADED YET IS NOT THE SAME AS NONE, and conflating them is what made the landing screen
+  // ugly: before the first response `devices` is an empty array, so the screen rendered "No
+  // paired devices yet" — a confident wrong answer — and then replaced it a moment later. The
+  // markup in index.html is already the skeleton, so leaving it alone is the whole fix.
+  if (!devicesLoaded) return;
+
   const root = $("#screen-devices");
   const frag = [
     el("h2", { className: "screen", textContent: "Devices" }),

@@ -507,3 +507,34 @@ body { padding-top: var(--header-h); }
   -webkit-tap-highlight-color: transparent;
 }
 .detail-back:active { opacity: 0.6; }
+
+/* --- loading skeleton ------------------------------------------------------
+
+   Shaped like the card it becomes. A placeholder of the wrong size only moves the jolt from
+   "content appears" to "content resizes", which is the layout-stability point that matters most
+   on the screen you land on. */
+
+/* Lighter than the row it sits on. The first version used --panel-2, which is exactly the
+   device row's own background, so the placeholder lines were invisible and the skeleton was two
+   blank slabs — worse than no skeleton, because it looks like a rendering fault. */
+.sk {
+  background: linear-gradient(90deg, #35302c 25%, #474039 50%, #35302c 75%);
+  background-size: 200% 100%;
+  border-radius: 5px;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+.sk-line { height: 13px; }
+.sk-line.sk-sub { height: 10px; margin-top: 7px; }
+.sk-pill { width: 74px; height: 18px; border-radius: 999px; flex-shrink: 0; }
+.sk-card .row { cursor: default; }
+
+@keyframes sk-shimmer {
+  from { background-position: 200% 0; }
+  to { background-position: -200% 0; }
+}
+
+/* A shimmer is decoration; someone who has asked for less motion should get a plain block
+   rather than a moving one. */
+@media (prefers-reduced-motion: reduce) {
+  .sk { animation: none; background: #3a3430; }
+}
