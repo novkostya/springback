@@ -638,117 +638,6 @@ async function refreshAccounts() {
 
 let pendingSlug = null;
 
-function renderAccounts() {
-  const root = $("#screen-accounts");
-
-  const rows = accounts.map((a) => el("div", { className: "row static" }, [
-    el("div", { className: "row-main" }, [
-      el("div", { className: "row-title", textContent: a.email }),
-      el("div", { className: "row-sub", textContent: `${a.name || "—"} · added ${fmtDate(a.added_at)}` }),
-    ]),
-    el("div", { className: "row-right" }, [
-      a.signed_in
-        ? el("span", {
-            className: "status available", textContent: "signed in",
-            // Honest about what was checked: ipatool read the local credential file. It
-            // did not ask Apple.
-            title: "Credentials are stored here. Apple can still expire the session — the first sign of that is a download failing.",
-          })
-        : el("span", { className: "status delisted", textContent: "SIGN IN AGAIN" }),
-      (() => {
-        const b = el("button", { className: "link danger", textContent: "Remove" });
-        b.onclick = async (ev) => {
-          ev.stopPropagation();
-          if (!confirm(`Remove ${a.email}? The stored session is deleted from disk.`)) return;
-          try {
-            await api(`/api/accounts/${encodeURIComponent(a.slug)}`, { method: "DELETE" });
-            toast(`Removed ${a.email}.`);
-            await refreshAccounts();
-            renderAccounts();
-          } catch (e) { toast(e.message, true); }
-        };
-        return b;
-      })(),
-    ]),
-  ]));
-
-  const form = el("form", { className: "stack" }, [
-    el("label", { textContent: "Apple ID email" }, [
-      el("input", { type: "email", id: "acc-email", autocomplete: "username", required: true }),
-    ]),
-    el("label", { textContent: "Password" }, [
-      el("input", { type: "password", id: "acc-pass", autocomplete: "current-password", required: true }),
-    ]),
-    // The code field is NOT rendered from state here. It is inserted in place when Apple asks
-    // for one, precisely so that this render never runs again mid-sign-in and never clears the
-    // email and password the second call still needs.
-    el("button", { className: "primary wide", type: "submit", id: "acc-submit", textContent: "Sign in" }),
-  ]);
-
-  form.onsubmit = async (ev) => {
-    ev.preventDefault();
-    const email = $("#acc-email").value.trim();
-    const password = $("#acc-pass").value;
-    const code = $("#acc-code") ? $("#acc-code").value.trim() : "";
-    const submit = $("#acc-submit");
-    submit.disabled = true;
-    try {
-      if (pendingSlug && code) {
-        // ipatool re-runs the whole login with the code attached, so the password goes
-        // with it. springback does not hold it between requests.
-        await api(`/api/accounts/${encodeURIComponent(pendingSlug)}/2fa`, {
-          method: "POST", body: JSON.stringify({ code, password }),
-        });
-      } else {
-        await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
-      }
-      toast(`Signed in as ${email}.`);
-      pendingSlug = null;
-      await refreshAccounts();
-      renderAccounts();
-    } catch (e) {
-      if (e.kind === "needs_2fa") {
-        // REVEAL THE CODE FIELD IN PLACE. Re-rendering the screen here rebuilt the form
-        // from scratch and wiped the email and password the user had just typed — and the
-        // password is REQUIRED for this second call, because ipatool re-runs the whole
-        // login with the code attached. So the step that asks for a code was destroying
-        // the thing it needs, and the form could not be completed at all. Reported from
-        // real use.
-        pendingSlug = e.body.slug;
-        submit.disabled = false;
-        submit.textContent = "Finish sign-in";
-        let wrap = $("#acc-2fa-wrap");
-        if (!wrap) {
-          wrap = el("label", { id: "acc-2fa-wrap", textContent: "Verification code" }, [
-            el("input", {
-              type: "text", id: "acc-code", inputMode: "numeric",
-              autocomplete: "one-time-code", placeholder: "123456",
-            }),
-          ]);
-          form.insertBefore(wrap, submit);
-        }
-        $("#acc-code").focus();
-        toast(e.body.detail);
-      } else {
-        toast(e.message, true);
-        submit.disabled = false;
-      }
-    }
-  };
-
-  root.replaceChildren(
-    el("h2", { className: "screen", textContent: "Accounts" }),
-    el("p", { className: "screen-hint", textContent: "One directory per Apple ID. Only the session is stored — never the password." }),
-    rows.length ? el("div", { className: "list" }, rows)
-                : el("p", { className: "empty", textContent: "No Apple IDs yet." }),
-    el("h3", { className: "sub-head", textContent: pendingSlug ? "Enter the code Apple sent" : "Add an Apple ID" }),
-    el("p", { className: "hint", textContent:
-      "Sessions expire. To renew one, sign in with the same address — the account is reused and nothing is lost." }),
-    form,
-    el("p", { className: "hint spaced", textContent:
-      "This signs in to Apple's Store API with an unofficial client, which is against Apple's terms; accounts have been flagged for it. The risk is yours and stays on this box." }),
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Navigation + auto-refresh
@@ -778,15 +667,114 @@ function show(screen) {
   }
   $("#back").hidden = screen !== "app";
   window.scrollTo(0, 0);
-  // Navigating TO accounts renders it — that is an explicit act, unlike the timers, and a
-  // half-typed form is not something to preserve across leaving the screen.
+  // The accounts LIST is refreshed on arrival; the form is static markup and is never touched.
   if (screen === "accounts") {
-    pendingSlug = null;
-    renderAccounts();
+    refreshAccounts().then(renderAccountsList);
     return;
   }
   rerenderCurrent();
 }
+
+// ---------------------------------------------------------------------------
+// Accounts — list rendering only. The form lives in index.html and is wired once, below.
+// ---------------------------------------------------------------------------
+
+function renderAccountsList() {
+  const root = $("#accounts-list");
+  if (!accounts.length) {
+    root.replaceChildren(el("p", { className: "empty", textContent: "No Apple IDs yet." }));
+    return;
+  }
+  root.replaceChildren(el("div", { className: "list" }, accounts.map((a) =>
+    el("div", { className: "row static" }, [
+      el("div", { className: "row-main" }, [
+        el("div", { className: "row-title", textContent: a.email }),
+        el("div", { className: "row-sub", textContent: `${a.name || "—"} · added ${fmtDate(a.added_at)}` }),
+      ]),
+      el("div", { className: "row-right stack" }, [
+        a.signed_in
+          ? el("span", {
+              className: "status available", textContent: "signed in",
+              // Honest about what was checked: ipatool read the local credential file.
+              // It did not ask Apple.
+              title: "Credentials are stored here. Apple can still expire the session — the first sign of that is a download failing.",
+            })
+          : el("span", { className: "status delisted", textContent: "SIGN IN AGAIN" }),
+        (() => {
+          const b = el("button", { className: "link danger", textContent: "Remove" });
+          b.onclick = async () => {
+            if (!confirm(`Remove ${a.email}? The stored session is deleted from disk.`)) return;
+            try {
+              await api(`/api/accounts/${encodeURIComponent(a.slug)}`, { method: "DELETE" });
+              toast(`Removed ${a.email}.`);
+              await refreshAccounts();
+              renderAccountsList();
+            } catch (e) { toast(e.message, true); }
+          };
+          return b;
+        })(),
+      ]),
+    ]))));
+}
+
+// The sign-in form is wired ONCE, against markup that was in the document at load. Nothing here
+// ever recreates an input, so nothing can clear what the user (or Safari) has put in one.
+$("#signin").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  const emailEl = $("#acc-email");
+  const passEl = $("#acc-pass");
+  const codeEl = $("#acc-code");
+  const submit = $("#acc-submit");
+
+  const email = emailEl.value.trim();
+  const password = passEl.value;
+  const code = codeEl.value.trim();
+
+  if (!email || !password) {
+    // Safari can leave a field visually filled but empty to script until it is touched, so
+    // say which one is missing rather than sending a blank credential to Apple.
+    toast(!email ? "Enter the Apple ID email." : "Enter the password.", true);
+    return;
+  }
+
+  submit.disabled = true;
+  const original = submit.textContent;
+  submit.textContent = "Signing in…";
+  try {
+    if (pendingSlug && code) {
+      // ipatool re-runs the whole login with the code attached, so the password goes with
+      // it. springback does not hold it between requests.
+      await api(`/api/accounts/${encodeURIComponent(pendingSlug)}/2fa`, {
+        method: "POST", body: JSON.stringify({ code, password }),
+      });
+    } else {
+      await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
+    }
+    toast(`Signed in as ${email}.`);
+    // Clearing here is deliberate and is the ONLY place it happens: the sign-in succeeded, so
+    // the password has no further use and should not sit in the DOM.
+    pendingSlug = null;
+    passEl.value = "";
+    codeEl.value = "";
+    $("#acc-2fa-wrap").hidden = true;
+    submit.textContent = "Sign in";
+    await refreshAccounts();
+    renderAccountsList();
+  } catch (e) {
+    if (e.kind === "needs_2fa") {
+      pendingSlug = e.body.slug;
+      $("#acc-2fa-wrap").hidden = false;
+      codeEl.focus();
+      submit.textContent = "Finish sign-in";
+      toast(e.body.detail);
+    } else {
+      toast(e.message, true);
+      submit.textContent = original;
+    }
+  } finally {
+    submit.disabled = false;
+  }
+});
 
 $("#back").onclick = () => show(detail && detail.item && !detail.app ? "library" : "devices");
 

@@ -32,7 +32,52 @@
 <main>
   <section id="screen-devices"></section>
   <section id="screen-library" hidden></section>
-  <section id="screen-accounts" hidden></section>
+  <section id="screen-accounts" hidden>
+    <h2 class="screen">Accounts</h2>
+    <p class="screen-hint">One directory per Apple ID. Only the session is stored — never the password.</p>
+    <div id="accounts-list"></div>
+
+    <h3 class="sub-head">Add an Apple ID</h3>
+    <p class="hint">
+      Sessions expire. To renew one, sign in with the same address — the account is reused and
+      nothing is lost.
+    </p>
+
+    <!--
+      THIS FORM IS STATIC MARKUP AND IS NEVER REBUILT BY JAVASCRIPT, which is a fix for two
+      separate reported bugs rather than a style preference.
+
+      1. It used to be constructed in JS and swapped in on every render of this screen, so any
+         re-render mid-sign-in wiped the email and password — and the password is REQUIRED for
+         the 2FA step, because ipatool re-runs the whole login with the code attached. The step
+         that asks for a code was destroying the thing it needs.
+      2. Safari's password manager would not autofill it at all. It is far happier with a real
+         form that exists in the document from the start and whose fields carry `name`
+         attributes, than with one assembled by script after load.
+
+      The verification-code field is present from the start and merely revealed, so even that
+      does not restructure the form.
+    -->
+    <form id="signin" class="stack" method="post" action="#">
+      <label for="acc-email">Apple ID email
+        <input type="email" id="acc-email" name="username" autocomplete="username"
+               autocapitalize="none" autocorrect="off" spellcheck="false" required>
+      </label>
+      <label for="acc-pass">Password
+        <input type="password" id="acc-pass" name="password" autocomplete="current-password" required>
+      </label>
+      <label for="acc-code" id="acc-2fa-wrap" hidden>Verification code
+        <input type="text" id="acc-code" name="one-time-code" inputmode="numeric"
+               autocomplete="one-time-code" placeholder="123456">
+      </label>
+      <button class="primary wide" type="submit" id="acc-submit">Sign in</button>
+    </form>
+
+    <p class="hint spaced">
+      This signs in to Apple's Store API with an unofficial client, which is against Apple's
+      terms; accounts have been flagged for it. The risk is yours and stays on this box.
+    </p>
+  </section>
   <section id="screen-app" hidden></section>
 </main>
 
