@@ -24,10 +24,15 @@
    is the guard that keeps the next wide thing from doing it again: a horizontal scrollbar on the
    document is never what this UI wants, so it is disallowed at the root rather than avoided by
    discipline in each component. */
+/* `overflow-x: CLIP`, on the body only — NOT `hidden`, and not on <html>.
+   `overflow-x: hidden` makes the element a scroll container, and doing that to the document is
+   what produced iOS Safari's "blank until I scroll" on a back-swipe: restoring a scroll offset
+   into a container the browser no longer believes is the scroller leaves an unpainted viewport.
+   `clip` does the same clipping with no scroll container and no effect on scroll restoration. */
 html, body {
   max-width: 100%;
-  overflow-x: hidden;
 }
+body { overflow-x: clip; }
 
 body {
   margin: 0;

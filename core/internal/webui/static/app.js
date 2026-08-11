@@ -677,7 +677,36 @@ function rerenderCurrent() {
 //
 // `push` is false when the navigation IS a back/forward event: re-pushing there would fight the
 // user, appending an entry each time they tried to leave.
-function show(screen, { path, push = true } = {}) {
+// SCROLL POSITION IS PER HISTORY ENTRY, kept by us rather than by the browser.
+//
+// `history.scrollRestoration = "manual"` turns off the browser's own attempt, which cannot work
+// here: it restores the offset at popstate time, when this app has not yet rebuilt the list, so
+// it lands past the end of a short page and leaves a blank viewport. We restore after the
+// content is back, which is the only moment the offset means anything.
+//
+// Going BACK returns you where you were; going FORWARD to something new starts at the top. That
+// is what native apps and ordinary pages do, and the difference is exactly whether the entry has
+// been seen before.
+history.scrollRestoration = "manual";
+
+const scrollPositions = new Map(); // history key -> scrollY
+let historyKey = 0;
+let nextHistoryKey = 1;
+
+function rememberScroll() {
+  scrollPositions.set(historyKey, window.scrollY);
+}
+
+// restoreScroll waits for layout before setting the offset. A single frame is not enough: the
+// render happens in this task, and the page has not been laid out until the frame after it, so
+// scrolling immediately clamps against the OLD height and silently lands at the top.
+function restoreScroll(y) {
+  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y || 0)));
+}
+
+function show(screen, { path, push = true, restore = null } = {}) {
+  if (push) rememberScroll();
+
   current = screen;
   for (const b of document.querySelectorAll("nav button")) {
     // The detail view belongs to whichever list you came from, so no tab owns it.
@@ -687,25 +716,27 @@ function show(screen, { path, push = true } = {}) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
   $("#back").hidden = screen !== "app";
-  window.scrollTo(0, 0);
 
   if (push) {
     const url = path || (screen === "devices" ? "/" : `/${screen}`);
-    const state = { screen, detail: detail && (detail.item
+    const key = nextHistoryKey++;
+    const state = { screen, key, detail: detail && (detail.item
       ? { item: detail.item.id }
       : { udid: detail.device.udid, bundle: detail.app.bundle_id }) };
     // replaceState when the target is where we already are, so tapping the current tab does
     // not stack identical entries the user then has to swipe through one by one.
     if (location.pathname === url) history.replaceState(state, "", url);
     else history.pushState(state, "", url);
+    historyKey = key;
   }
 
   // The accounts LIST is refreshed on arrival; the form is static markup and is never touched.
   if (screen === "accounts") {
-    refreshAccounts().then(renderAccountsList);
+    refreshAccounts().then(() => { renderAccountsList(); restoreScroll(restore); });
     return;
   }
   rerenderCurrent();
+  restoreScroll(restore);
 }
 
 // applyRoute restores a view from a history entry — on a back/forward, or on a cold load of a
@@ -713,17 +744,21 @@ function show(screen, { path, push = true } = {}) {
 // reload arrives with no state at all.
 async function applyRoute(state) {
   const path = location.pathname;
+  // The offset this entry was left at, if it has been visited before. Absent for a cold load
+  // or a forward move into something new, which correctly start at the top.
+  const restore = state && state.key != null ? scrollPositions.get(state.key) : null;
+  if (state && state.key != null) historyKey = state.key;
 
   if (state && state.screen && state.screen !== "app") {
-    show(state.screen, { push: false });
+    show(state.screen, { push: false, restore });
     return;
   }
 
   const lib = path.match(/^\/library\/(\d+)$/);
   if (lib) {
     const item = library.find((i) => String(i.id) === lib[1]);
-    if (item) { detail = { item }; show("app", { push: false }); return; }
-    show("library", { push: false });
+    if (item) { detail = { item }; show("app", { push: false, restore }); return; }
+    show("library", { push: false, restore });
     return;
   }
 
@@ -737,16 +772,16 @@ async function applyRoute(state) {
     // on a view they only arrived at by going backwards.
     const payload = appsCache.get(udid);
     const app = payload && payload.apps.find((a) => a.bundle_id === bundle);
-    if (device && app) { detail = { app, device }; show("app", { push: false }); return; }
-    show("devices", { push: false });
+    if (device && app) { detail = { app, device }; show("app", { push: false, restore }); return; }
+    show("devices", { push: false, restore });
     return;
   }
 
   if (path === "/library" || path === "/accounts") {
-    show(path.slice(1), { push: false });
+    show(path.slice(1), { push: false, restore });
     return;
   }
-  show("devices", { push: false });
+  show("devices", { push: false, restore });
 }
 
 window.addEventListener("popstate", (ev) => { applyRoute(ev.state); });
@@ -904,6 +939,10 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
   try { await refreshDevices(); } catch (e) {
     $("#screen-devices").replaceChildren(el("div", { className: "error", textContent: e.message }));
   }
+  // The entry the page LOADED on has no state of its own, so without this it is the one entry
+  // that cannot remember a scroll position — and it is the one people scroll furthest down.
+  if (!history.state) history.replaceState({ key: 0 }, "", location.pathname);
+
   // Restore whatever the URL names rather than always starting at Devices, so a reload — or a
   // link someone kept — lands where it says it will.
   await applyRoute(history.state);
