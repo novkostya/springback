@@ -208,6 +208,54 @@ main { padding: 16px; max-width: 760px; margin: 0 auto; }
 .detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .detail-head h2 { margin: 0; }
 
+.detail-hero { display: flex; align-items: center; gap: 14px; }
+/* The heading block already carries its own bottom margin; inside the hero it would push the
+   icon's baseline off centre. */
+.detail-hero .detail-head { margin-bottom: 0; }
+.detail-hero { margin-bottom: 16px; }
+
+/* --- app icons ----------------------------------------------------------- */
+
+/* THE TILE IS SIZED IN CSS AND NEVER BY THE IMAGE. Bundles ship icons at whatever size they
+   like — 120px here, 152px there, occasionally 180 — and letting the intrinsic size through
+   would give a list of rows with different heights that settle one by one as each PNG arrives.
+   Fixed box, object-fit, no reflow, ever.
+
+   The rounded square is iOS's "squircle" approximated with a plain radius. The real superellipse
+   needs an SVG mask, which is a lot of machinery to be slightly less wrong at four corners. */
+.app-icon {
+  position: relative;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+}
+.app-icon-sm { width: 38px; height: 38px; border-radius: 9px; }
+.app-icon-lg { width: 68px; height: 68px; border-radius: 16px; }
+
+/* The monogram sits UNDER the image and shows through until one loads — so an app with no icon
+   in its archive looks intentional rather than broken, and one whose icon is still arriving does
+   not flash an empty hole. */
+.app-icon-letter { color: var(--dim); font-weight: 600; user-select: none; }
+.app-icon-sm .app-icon-letter { font-size: 17px; }
+.app-icon-lg .app-icon-letter { font-size: 30px; }
+
+.app-icon-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+.app-icon-img.loaded { opacity: 1; }
+@media (prefers-reduced-motion: reduce) {
+  .app-icon-img { transition: none; }
+}
+
 .facts {
   margin: 0 0 16px;
   background: var(--panel);

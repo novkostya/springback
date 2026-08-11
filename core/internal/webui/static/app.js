@@ -384,7 +384,14 @@ function renderAppDetail() {
     item ? el("span", { className: "badge library", textContent: "in library" }) : null,
   ]);
 
-  const blocks = [back, head, el("dl", { className: "facts" }, facts)];
+  // The icon comes out of the ARCHIVE, so it exists only for apps that have been downloaded.
+  // An app that is installed on a device but not archived gets the plain heading — which is
+  // honest: there is no file here to take an icon from yet.
+  const hero = item
+    ? el("div", { className: "detail-hero" }, [appIcon(item.id, title, "lg"), head])
+    : head;
+
+  const blocks = [back, hero, el("dl", { className: "facts" }, facts)];
 
   if (a && a.store_status === "delisted") {
     blocks.push(el("p", { className: "note warn-note" }, [
@@ -704,6 +711,43 @@ async function archive(appID, slug, label, btn) {
 }
 
 // ---------------------------------------------------------------------------
+// Icons
+// ---------------------------------------------------------------------------
+
+// appIcon returns the icon tile for a library app: the real artwork if the archive had any, and
+// a lettered tile if not.
+//
+// THE MONOGRAM IS RENDERED FIRST AND THE IMAGE FADES IN OVER IT. The alternative — an empty box
+// that becomes an icon — reflows nothing but flashes on every list paint, and roughly one app in
+// this library legitimately has no icon to load, so the empty state has to look deliberate
+// rather than broken. Because the tile is always the same size, nothing on the row moves either
+// way.
+//
+// A 404 is expected, not exceptional: the server has already looked inside the archive and found
+// nothing, and it says so in a fraction of the time it takes to fail a download. `onerror` just
+// leaves the monogram showing.
+function appIcon(id, name, size) {
+  const letter = (String(name || "?").trim()[0] || "?").toUpperCase();
+  const tile = el("div", { className: `app-icon app-icon-${size || "sm"}` }, [
+    el("span", { className: "app-icon-letter", textContent: letter }),
+  ]);
+  if (!id) return tile;
+
+  const img = el("img", {
+    className: "app-icon-img",
+    alt: "",
+    // Decorative: the app's name is already the row title, so a screen reader announcing the
+    // icon as well would read every app twice.
+    loading: "lazy",
+    decoding: "async",
+    src: `/api/library/${id}/icon.png`,
+  });
+  img.onload = () => img.classList.add("loaded");
+  tile.append(img);
+  return tile;
+}
+
+// ---------------------------------------------------------------------------
 // Library
 // ---------------------------------------------------------------------------
 
@@ -715,6 +759,7 @@ function renderLibrary() {
   const root = $("#screen-library");
   const rows = library.map((it) => {
     const r = el("a", { className: "row", href: `/library/${it.id}` }, [
+      appIcon(it.id, it.name || it.bundle_id, "sm"),
       el("div", { className: "row-main" }, [
         el("div", { className: "row-title", textContent: it.name || it.bundle_id }),
         el("div", { className: "row-sub", textContent: `${it.version || "—"} · ${fmtSize(it.size)}` }),

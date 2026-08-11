@@ -7,11 +7,13 @@
 package httpapi
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -56,6 +58,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/library", s.listLibrary)
 	mux.HandleFunc("POST /api/library", s.addLibrary)
 	mux.HandleFunc("DELETE /api/library/{id}", s.deleteLibrary)
+	mux.HandleFunc("GET /api/library/{id}/icon.png", s.libraryIcon)
 
 	mux.HandleFunc("GET /api/accounts", s.listAccounts)
 	mux.HandleFunc("POST /api/accounts", s.addAccount)
@@ -328,6 +331,44 @@ func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// libraryIcon serves the app's icon, extracted from its .ipa on first request.
+//
+// A 404 here is ORDINARY, not an error worth reporting: plenty of archives have no icon this can
+// find, and the UI's job is to draw a placeholder and stop asking. Nothing is logged at error
+// level for it, or a library of such apps would fill the log on every page load.
+func (s *Server) libraryIcon(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad_id", "Not a numeric id.")
+		return
+	}
+
+	b, err := s.Library.Icon(id)
+	if err != nil {
+		s.Log.Debug("no icon", "id", id, "err", err)
+		http.NotFound(w, r)
+		return
+	}
+
+	// Cached hard and keyed by id, because the bytes only change when the .ipa is replaced —
+	// and Record() deletes the cache file when that happens. The URL is stable across an
+	// update, so the response carries a validator the browser can use rather than
+	// `immutable`: a phone that cached the old icon must be able to notice the new one.
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=60, must-revalidate")
+	http.ServeContent(w, r, "icon.png", iconModTime(s.Library, id), bytes.NewReader(b))
+}
+
+// iconModTime is the cache file's timestamp, or the zero time when it cannot be read — which
+// ServeContent takes as "no Last-Modified", not as 1970.
+func iconModTime(lib *store.Library, id int64) time.Time {
+	st, err := os.Stat(lib.IconPath(id))
+	if err != nil {
+		return time.Time{}
+	}
+	return st.ModTime()
 }
 
 // ---------------------------------------------------------------------------

@@ -51,6 +51,50 @@ func (l *Library) metaPath(id int64) string {
 	return filepath.Join(l.dir(id), "meta.json")
 }
 
+// IconPath is /library/<id>/icon.png — the app's home-screen icon, lifted out of the archive.
+func (l *Library) IconPath(id int64) string {
+	return filepath.Join(l.dir(id), "icon.png")
+}
+
+// iconMissPath marks an archive that has already been searched and found to have no usable
+// icon. Without it, a library of such apps re-opens every one of them on every page load.
+// The file holds the reason, for whoever has to work out why an icon is missing.
+func (l *Library) iconMissPath(id int64) string {
+	return filepath.Join(l.dir(id), "icon.none")
+}
+
+// Icon returns the app's icon, extracting it from the .ipa on first use.
+//
+// EXTRACTED LAZILY, NOT AT DOWNLOAD TIME, for one practical reason: doing it at download time
+// would leave every app already in the library without an icon forever, and the archives are on
+// disk — there is nothing to re-fetch. The first request for each app pays for it once.
+//
+// Deliberately does NOT take l.mu. Opening an archive seeks to its central directory and
+// inflates one small file, but the archive can be 800 MB and the cost is not something to hold a
+// lock across while List() waits behind it. Two concurrent extractions of the same app do the
+// same work twice and write the same bytes atomically, which is wasteful and harmless.
+func (l *Library) Icon(id int64) ([]byte, error) {
+	if b, err := os.ReadFile(l.IconPath(id)); err == nil && len(b) > 0 {
+		return b, nil
+	}
+	if _, err := os.Stat(l.iconMissPath(id)); err == nil {
+		return nil, ipa.ErrNoIcon
+	}
+
+	b, err := ipa.Icon(l.IPAPath(id))
+	if err != nil {
+		// Remember the failure only when the archive itself is present. A missing .ipa is a
+		// half-finished download or a race with Delete, and caching "no icon" for it would
+		// outlive the condition that caused it.
+		if _, statErr := os.Stat(l.IPAPath(id)); statErr == nil {
+			_ = writeFileAtomic(l.iconMissPath(id), []byte(err.Error()+"\n"), 0o644)
+		}
+		return nil, err
+	}
+	_ = writeFileAtomic(l.IconPath(id), b, 0o644)
+	return b, nil
+}
+
 // List returns the library, newest download first.
 func (l *Library) List() ([]LibraryItem, error) {
 	l.mu.Lock()
@@ -167,6 +211,12 @@ func (l *Library) Record(id int64, accountSlug string) (LibraryItem, error) {
 	if err != nil {
 		return LibraryItem{}, err
 	}
+
+	// The archive under this id has just been replaced, so anything cached from the previous
+	// one is stale. An app that rebrands between versions would otherwise keep its old icon
+	// after an update, with nothing on screen to suggest why.
+	_ = os.Remove(l.IconPath(id))
+	_ = os.Remove(l.iconMissPath(id))
 
 	item := LibraryItem{
 		ID:           id,

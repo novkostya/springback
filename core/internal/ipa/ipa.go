@@ -31,6 +31,23 @@ type infoPlist struct {
 	Version     string `plist:"CFBundleShortVersionString"`
 	DisplayName string `plist:"CFBundleDisplayName"`
 	Name        string `plist:"CFBundleName"`
+
+	// The icon keys, in the four spellings iOS has used. Modern bundles set CFBundleIcons;
+	// an iPad-only app may set only the ~ipad variant; the two bare keys are pre-iOS 5 and
+	// cost nothing to keep. See icon.go for why the declared name has to be read at all.
+	Icons     iconSet  `plist:"CFBundleIcons"`
+	IconsIPad iconSet  `plist:"CFBundleIcons~ipad"`
+	IconFiles []string `plist:"CFBundleIconFiles"`
+	IconFile  string   `plist:"CFBundleIconFile"`
+}
+
+type iconSet struct {
+	Primary primaryIcon `plist:"CFBundlePrimaryIcon"`
+}
+
+type primaryIcon struct {
+	Files []string `plist:"CFBundleIconFiles"`
+	Name  string   `plist:"CFBundleIconName"`
 }
 
 // itunesPlist is the subset of the archive-root iTunesMetadata.plist springback reads.
