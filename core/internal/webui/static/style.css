@@ -53,16 +53,23 @@ header {
   top: 0;
   background: var(--bg);
   z-index: 5;
-  /* Its own compositor layer. A sticky bar that shares a layer with the content beneath it is
-     repainted whenever that content changes — which on a back-swipe is one frame of flicker
-     right where the eye is. Promoting it means the swap underneath never touches it. */
-  transform: translateZ(0);
-  will-change: transform;
 }
+/* NO COMPOSITOR PROMOTION HERE, AND THAT IS THE FIX RATHER THAN AN OMISSION.
+   I added `transform: translateZ(0); will-change: transform` to stop a repaint flicker, and a
+   screen recording showed it caused a worse one: for a single frame during a back-swipe the
+   header vanished entirely and the list was drawn at the top of the screen. A sticky element on
+   its own layer can be composited with the page's new scroll offset applied but its sticky
+   adjustment not yet recomputed — so it is drawn at its static position, hundreds of pixels
+   above the viewport, and simply is not there. Sticky and forced layer promotion do not mix. */
 .titlebar { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 .tagline { margin: 1px 0 10px; color: var(--dim); font-size: 12px; }
 
+/* THE BACK ARROW KEEPS ITS SPACE WHEN IT IS NOT SHOWN.
+   Removing it from the layout moved the title 54px sideways on every push and pop — measured —
+   so the top bar reflowed twice per navigation. `visibility` hides it while the header's geometry
+   stays identical on every screen, which is also how a native navigation bar behaves: a fixed
+   leading area that is sometimes empty. */
 .back {
   background: none;
   border: 0;
@@ -73,6 +80,7 @@ h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
   cursor: pointer;
   min-width: var(--tap);
 }
+.back.hidden { visibility: hidden; pointer-events: none; }
 
 nav { display: flex; gap: 2px; overflow-x: auto; }
 nav button {

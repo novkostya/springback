@@ -765,7 +765,9 @@ function showScreen(screen) {
   for (const s of ["devices", "library", "accounts", "app"]) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
-  $("#back").hidden = screen !== "app";
+  // Toggled by CLASS, not the hidden attribute: hidden removes it from the layout and the
+  // title jumps sideways. The space stays reserved either way.
+  $("#back").classList.toggle("hidden", screen !== "app");
 }
 
 function renderScreen(screen) {
