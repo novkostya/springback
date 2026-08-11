@@ -2,8 +2,14 @@ package tools
 
 import (
 	"archive/zip"
+	"bytes"
 	"context"
 	"fmt"
+	"hash/fnv"
+	"image"
+	"image/color"
+	"image/draw"
+	"image/png"
 	"os"
 	"path/filepath"
 
@@ -202,6 +208,44 @@ func (f *Fake) ListApps(ctx context.Context, udid string) ([]InstalledApp, error
 		return nil, ErrDeviceUnreachable
 	}
 	return append([]InstalledApp(nil), f.apps[udid]...), nil
+}
+
+// DeviceIcons draws a flat square per app instead of asking a device for one.
+//
+// THE FIXTURE DELIBERATELY LEAVES SOME APPS WITHOUT AN ICON. On a real device a handful of
+// bundles return nothing, and an implementation only ever exercised against a complete set is one
+// where the missing-icon path — the monogram tile, the negative cache entry that stops the warm
+// re-running forever — is never run at all. Every fourth app here has no icon, deterministically.
+func (f *Fake) DeviceIcons(ctx context.Context, udid string, bundleIDs []string) (map[string][]byte, error) {
+	f.mu.Lock()
+	d, ok := f.devices[udid]
+	f.mu.Unlock()
+	if !ok || !d.awake {
+		return nil, ErrDeviceUnreachable
+	}
+
+	icons := map[string][]byte{}
+	for i, b := range bundleIDs {
+		if !safeBundleID(b) || i%4 == 3 {
+			continue
+		}
+		// A colour derived from the bundle id, so the same app is the same colour on every
+		// render and a mis-keyed cache is visible rather than merely wrong.
+		h := fnv.New32a()
+		_, _ = h.Write([]byte(b))
+		sum := h.Sum32()
+		img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+		draw.Draw(img, img.Bounds(), &image.Uniform{color.NRGBA{
+			R: byte(sum), G: byte(sum >> 8), B: byte(sum >> 16), A: 0xff,
+		}}, image.Point{}, draw.Src)
+
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, img); err != nil {
+			return nil, err
+		}
+		icons[b] = buf.Bytes()
+	}
+	return icons, nil
 }
 
 func (f *Fake) InstallApp(ctx context.Context, udid, ipaPath string, onProgress func(InstallProgress)) error {

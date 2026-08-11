@@ -61,6 +61,19 @@ RUN ./autogen.sh --prefix=/usr \
     && make -j"$(nproc)" \
     && make DESTDIR=/stage install
 
+# --- sbicon: the one device call libimobiledevice ships no tool for ---
+#
+# SpringBoard services can hand back the icon a device draws for an installed app, which is the
+# only icon source that also covers DELISTED apps — the store has no artwork for them and, for
+# anything not archived, there is no .ipa to look inside either. No shipped CLI exposes it, so
+# springback builds its own. Same libraries and same Alpine as ideviceinstaller above, so this
+# stage adds a compile and no new packages to the runtime.
+FROM ${ALPINE_IMAGE} AS sbicon-build
+RUN apk add --no-cache build-base pkgconf libimobiledevice-dev libplist-dev libimobiledevice-glue-dev
+COPY deploy/sbicon.c /src/sbicon.c
+RUN cc -O2 -Wall -Wextra -Werror -o /sbicon /src/sbicon.c \
+      $(pkg-config --cflags --libs libimobiledevice-1.0)
+
 # --- core: embed the static UI, cgo-free static binary ---
 FROM toolchain-go AS core-build
 ARG VERSION=0.0.0-dev
@@ -99,6 +112,7 @@ RUN apk add --no-cache \
 
 COPY --from=ipatool-build /ipatool /usr/local/bin/ipatool
 COPY --from=ideviceinstaller-build /stage/usr/bin/ideviceinstaller /usr/local/bin/ideviceinstaller
+COPY --from=sbicon-build /sbicon /usr/local/bin/sbicon
 COPY --from=core-build /springback /usr/local/bin/springback
 
 ENV SPRINGBACK_LIBRARY=/library \

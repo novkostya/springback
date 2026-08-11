@@ -31,13 +31,16 @@ import (
 
 // Server wires the packages together.
 type Server struct {
-	Tools    tools.Tools
-	Devices  *devices.Service
-	Library  *store.Library
-	Accounts *store.Accounts
-	Resolver *storefront.Resolver
-	Jobs     *jobs.Registry
-	Log      *slog.Logger
+	Tools   tools.Tools
+	Devices *devices.Service
+	Library *store.Library
+	// DeviceIcons is the cache of icons read off the devices themselves — the only source
+	// that has artwork for a delisted app that has not been archived.
+	DeviceIcons *store.DeviceIcons
+	Accounts    *store.Accounts
+	Resolver    *storefront.Resolver
+	Jobs        *jobs.Registry
+	Log         *slog.Logger
 	// Fake reports whether the tool layer is the fake one. The UI shows a banner: a screen
 	// full of plausible device names that is not talking to any device would otherwise be
 	// indistinguishable from the real thing.
@@ -54,6 +57,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/devices/{udid}/apps", s.deviceApps)
 	mux.HandleFunc("GET /api/devices/{udid}/installed", s.deviceInstalled)
 	mux.HandleFunc("POST /api/devices/{udid}/install", s.install)
+	mux.HandleFunc("GET /api/devices/{udid}/icon.png", s.deviceIcon)
 
 	mux.HandleFunc("GET /api/library", s.listLibrary)
 	mux.HandleFunc("POST /api/library", s.addLibrary)
@@ -128,6 +132,22 @@ func (s *Server) deviceApps(w http.ResponseWriter, r *http.Request) {
 	if res.Apps == nil {
 		res.Apps = []devices.App{}
 	}
+
+	// Start pulling the icons now, in the background, so the list is not the thing that
+	// discovers they are missing. Without this the first icon request pays for the whole warm
+	// while holding one of the browser's few connections, and the poll behind it waits.
+	//
+	// NOT the request's context: this outlives the response on purpose, and cancelling it when
+	// the browser has what it asked for would mean the warm never finishes. Deduplicated per
+	// device, so the five-second device poll cannot stack these up.
+	go func(udid string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+		defer cancel()
+		if err := s.DeviceIcons.Warm(ctx, udid); err != nil {
+			s.Log.Debug("icon warm failed", "udid", udid, "err", err)
+		}
+	}(r.PathValue("udid"))
+
 	writeJSON(w, http.StatusOK, res)
 }
 
@@ -152,6 +172,50 @@ func (s *Server) deviceInstalled(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// deviceIcon serves the icon a device draws for one of its installed apps.
+//
+// The bundle id and version come in as query parameters rather than path segments because a
+// bundle id is dotted and a version is dotted, and both read far better in a query than as two
+// more path components to escape.
+//
+// THE FIRST REQUEST IS SLOW AND THE REST ARE NOT. A miss warms every uncached icon on that
+// device in one batch — one SpringBoard connection instead of two hundred — so the handful of
+// requests the browser makes for the first screenful all wait on the same run and then complete
+// together. Roughly three seconds once per device, and nothing after that.
+func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
+	udid := r.PathValue("udid")
+	bundle := r.URL.Query().Get("bundle")
+	version := r.URL.Query().Get("v")
+	if bundle == "" {
+		writeErr(w, http.StatusBadRequest, "bad_request", "bundle is required.")
+		return
+	}
+
+	b, err := s.DeviceIcons.Get(r.Context(), udid, bundle, version)
+	if err != nil {
+		// Every outcome here is a 404 on purpose. An app with no icon, a device that went to
+		// sleep mid-scroll and a bundle id that no longer exists are all the same thing to
+		// the UI — draw the lettered tile — and none of them is worth a red banner over a
+		// list the user is already reading.
+		s.Log.Debug("no device icon", "udid", udid, "bundle", bundle, "err", err)
+		http.NotFound(w, r)
+		return
+	}
+
+	// The version is in the URL, so these bytes can never change under it: a new version is a
+	// new URL. That makes the response genuinely immutable, which matters here more than
+	// anywhere else in the app — a device list is two hundred images and the phone should
+	// re-fetch none of them on the second visit.
+	w.Header().Set("Content-Type", "image/png")
+	if version != "" {
+		w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "private, max-age=60, must-revalidate")
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+	_, _ = w.Write(b)
 }
 
 type installReq struct {

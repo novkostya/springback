@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -85,18 +86,23 @@ func main() {
 
 	library := store.NewLibrary(*libraryDir)
 	accounts := store.NewAccounts(*accountsDir)
+	// Under the library root because that is the volume with room on it, and in a dot-directory
+	// because Library.List() keys on directory names that parse as numeric App Store ids — so
+	// this one is skipped by the same rule that already skips store-status-cache.json.
+	deviceIcons := store.NewDeviceIcons(filepath.Join(*libraryDir, ".device-icons"), t)
 	resolver := storefront.NewResolver(t, *cacheTTL, store.NewStatusCache(*libraryDir))
 	jobRegistry := jobs.NewRegistry()
 
 	srv := &httpapi.Server{
-		Tools:    t,
-		Devices:  &devices.Service{Tools: t, Resolver: resolver, Library: library},
-		Library:  library,
-		Accounts: accounts,
-		Resolver: resolver,
-		Jobs:     jobRegistry,
-		Log:      log,
-		Fake:     *fake,
+		Tools:       t,
+		Devices:     &devices.Service{Tools: t, Resolver: resolver, Library: library},
+		Library:     library,
+		DeviceIcons: deviceIcons,
+		Accounts:    accounts,
+		Resolver:    resolver,
+		Jobs:        jobRegistry,
+		Log:         log,
+		Fake:        *fake,
 	}
 
 	httpSrv := &http.Server{

@@ -316,6 +316,7 @@ function appRow(a, device) {
     className: "row",
     href: `/device/${encodeURIComponent(device.udid)}/${encodeURIComponent(a.bundle_id)}`,
   }, [
+    deviceIcon(device.udid, a.bundle_id, a.version, a.store_name || a.name || a.bundle_id, "sm"),
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: a.store_name || a.name || a.bundle_id }),
       el("div", { className: "row-sub", textContent: a.bundle_id }),
@@ -384,12 +385,16 @@ function renderAppDetail() {
     item ? el("span", { className: "badge library", textContent: "in library" }) : null,
   ]);
 
-  // The icon comes out of the ARCHIVE, so it exists only for apps that have been downloaded.
-  // An app that is installed on a device but not archived gets the plain heading — which is
-  // honest: there is no file here to take an icon from yet.
-  const hero = item
-    ? el("div", { className: "detail-hero" }, [appIcon(item.id, title, "lg", item.downloaded_at), head])
-    : head;
+  // TWO SOURCES, ARCHIVE FIRST. A downloaded app's icon comes out of its .ipa; anything else
+  // that is installed somewhere can be asked of the device itself. The archive wins when both
+  // exist because it is on local disk and needs no device to be awake — and because it is the
+  // flat store artwork, which matches the library list this screen is usually reached from.
+  const heroIcon = item
+    ? appIcon(item.id, title, "lg", item.downloaded_at)
+    : (a && detail.device
+        ? deviceIcon(detail.device.udid, a.bundle_id, a.version, title, "lg")
+        : null);
+  const hero = heroIcon ? el("div", { className: "detail-hero" }, [heroIcon, head]) : head;
 
   const blocks = [back, hero, el("dl", { className: "facts" }, facts)];
 
@@ -761,16 +766,17 @@ const tiles = new Map();
 // re-downloading an app that has since rebranded actually shows the new icon: without it, the
 // cached node would keep the old image and the browser would keep serving the old bytes from the
 // unchanged URL.
-function appIcon(id, name, size, version) {
+function iconTile(key, name, size, src) {
   const kind = size || "sm";
   const letter = (String(name || "?").trim()[0] || "?").toUpperCase();
-  const key = `${id || 0}:${kind}`;
-  const stamp = version || "";
+  const slot = `${key}:${kind}`;
 
-  const cached = id ? tiles.get(key) : null;
-  if (cached && cached.stamp === stamp) {
-    // The name can change under a fixed id when an update rewrites meta.json, and the
-    // monogram is still visible for apps with no artwork.
+  const cached = src ? tiles.get(slot) : null;
+  // The src carries its own version, so comparing it is the whole staleness check: same URL
+  // means the same bytes, and a different URL means the picture genuinely changed.
+  if (cached && cached.src === src) {
+    // The name can change under a fixed key when an update rewrites the app's metadata, and
+    // the monogram is still visible for apps with no artwork.
     cached.tile.querySelector(".app-icon-letter").textContent = letter;
     return cached.tile;
   }
@@ -778,16 +784,20 @@ function appIcon(id, name, size, version) {
   const tile = el("div", { className: `app-icon app-icon-${kind}` }, [
     el("span", { className: "app-icon-letter", textContent: letter }),
   ]);
-  if (!id) return tile;
+  if (!src) return tile;
 
   const img = el("img", {
     className: "app-icon-img",
     alt: "",
     // Decorative: the app's name is already the row title, so a screen reader announcing the
     // icon as well would read every app twice.
+    //
+    // LAZY MATTERS HERE. A device holds a couple of hundred apps; fetching every icon for a
+    // list the user has seen four rows of would be megabytes off an iPhone over wifi to draw
+    // nothing.
     loading: "lazy",
     decoding: "async",
-    src: `/api/library/${id}/icon.png${stamp ? `?v=${encodeURIComponent(stamp)}` : ""}`,
+    src,
   });
   img.onload = () => img.classList.add("loaded");
   // An image already in the browser's cache can be complete the moment it is created. Waiting
@@ -795,8 +805,27 @@ function appIcon(id, name, size, version) {
   if (img.complete && img.naturalWidth > 0) img.classList.add("loaded");
   tile.append(img);
 
-  tiles.set(key, { stamp, tile });
+  tiles.set(slot, { src, tile });
   return tile;
+}
+
+// appIcon is the icon of an ARCHIVED app, read out of the .ipa on this box.
+function appIcon(id, name, size, version) {
+  if (!id) return iconTile("lib:0", name, size, null);
+  const v = version ? `?v=${encodeURIComponent(version)}` : "";
+  return iconTile(`lib:${id}`, name, size, `/api/library/${id}/icon.png${v}`);
+}
+
+// deviceIcon is the icon the DEVICE draws for an app it has installed.
+//
+// This is the source that covers what the library cannot: an app that is delisted and has never
+// been archived exists in no store and in no .ipa here, so the phone holding it is the only thing
+// left that still has the picture.
+function deviceIcon(udid, bundleID, version, name, size) {
+  if (!udid || !bundleID) return iconTile("dev:0", name, size, null);
+  const q = `?bundle=${encodeURIComponent(bundleID)}&v=${encodeURIComponent(version || "")}`;
+  return iconTile(`dev:${udid}:${bundleID}`, name, size,
+    `/api/devices/${encodeURIComponent(udid)}/icon.png${q}`);
 }
 
 // ---------------------------------------------------------------------------

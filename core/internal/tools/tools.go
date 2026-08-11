@@ -173,6 +173,16 @@ type Tools interface {
 	ListApps(ctx context.Context, udid string) ([]InstalledApp, error)
 	// InstallApp pushes an .ipa. onProgress may be nil.
 	InstallApp(ctx context.Context, udid, ipaPath string, onProgress func(InstallProgress)) error
+	// DeviceIcons asks a device for the icons it draws for the given apps, returning bundle
+	// id -> PNG. Apps the device has no icon for are simply absent from the result.
+	//
+	// BATCHED BECAUSE CONNECTING IS THE EXPENSIVE PART: ~450ms to open the service and ~11ms
+	// per icon after that, measured across 214 apps on one device. One call per icon would
+	// turn a 2.7 second warm into a minute and a half of round trips.
+	//
+	// This is the only icon source that covers a delisted app: the store has no artwork for
+	// one, and until it is archived there is no .ipa to read either.
+	DeviceIcons(ctx context.Context, udid string, bundleIDs []string) (map[string][]byte, error)
 
 	// AuthLogin signs in. authCode is empty on the first call; ErrNeeds2FA means call again
 	// with one. The password is passed to the process over STDIN — never argv, where `ps`
