@@ -70,8 +70,10 @@ RUN ./autogen.sh --prefix=/usr \
 # stage adds a compile and no new packages to the runtime.
 FROM ${ALPINE_IMAGE} AS sbicon-build
 RUN apk add --no-cache build-base pkgconf libimobiledevice-dev libplist-dev libimobiledevice-glue-dev
-COPY deploy/sbicon.c /src/sbicon.c
+COPY deploy/sbicon.c deploy/sbwifi.c /src/
 RUN cc -O2 -Wall -Wextra -Werror -o /sbicon /src/sbicon.c \
+      $(pkg-config --cflags --libs libimobiledevice-1.0) \
+ && cc -O2 -Wall -Wextra -Werror -o /sbwifi /src/sbwifi.c \
       $(pkg-config --cflags --libs libimobiledevice-1.0)
 
 # --- core: embed the static UI, cgo-free static binary ---
@@ -113,6 +115,7 @@ RUN apk add --no-cache \
 COPY --from=ipatool-build /ipatool /usr/local/bin/ipatool
 COPY --from=ideviceinstaller-build /stage/usr/bin/ideviceinstaller /usr/local/bin/ideviceinstaller
 COPY --from=sbicon-build /sbicon /usr/local/bin/sbicon
+COPY --from=sbicon-build /sbwifi /usr/local/bin/sbwifi
 COPY --from=core-build /springback /usr/local/bin/springback
 
 ENV SPRINGBACK_LIBRARY=/library \

@@ -116,6 +116,26 @@ func (s *Service) List(ctx context.Context) ([]tools.Device, error) {
 	return out, nil
 }
 
+// Get returns one device's facts.
+//
+// Built out of List rather than asking the device directly, so the reachable/asleep rule lives in
+// exactly one place. A device that is asleep is still a device: it has a pairing record and a
+// page, and the page says it is not answering rather than pretending it does not exist.
+func (s *Service) Get(ctx context.Context, udid string) (tools.Device, error) {
+	all, err := s.List(ctx)
+	if err != nil {
+		return tools.Device{}, err
+	}
+	for _, d := range all {
+		if d.UDID == udid {
+			return d, nil
+		}
+	}
+	// Not in the list at all: no pairing record and not currently visible. Still worth a
+	// page — this is exactly the device someone has just plugged in to pair.
+	return tools.Device{UDID: udid}, nil
+}
+
 // Apps lists a device's user apps with a store status each.
 //
 // Delisted first, then unknown, then available: the whole point of the screen is the handful of

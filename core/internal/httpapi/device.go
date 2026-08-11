@@ -1,0 +1,116 @@
+package httpapi
+
+import (
+	"errors"
+	"net/http"
+
+	"github.com/novkostya/springback/core/internal/tools"
+)
+
+// deviceDetail is everything the device page shows that is not the app list.
+//
+// SEPARATE FROM THE DEVICE LIST ON PURPOSE. Pairing state and the Wi-Fi flag are two more round
+// trips to the device, and the list refreshes every five seconds across every device — paying
+// for them there would turn a cheap poll into a dozen device calls a second for facts nobody is
+// looking at.
+func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
+	udid := r.PathValue("udid")
+
+	dev, err := s.Devices.Get(r.Context(), udid)
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+
+	pair, err := s.Tools.PairStatus(r.Context(), udid)
+	if err != nil {
+		// Not fatal: the rest of the page is still worth drawing, and "unknown" is an
+		// honest thing to show for a device that would not answer.
+		s.Log.Debug("pair status failed", "udid", udid, "err", err)
+		pair = tools.PairUnknown
+	}
+
+	// Only asked of a device that is actually paired and awake. On an unpaired device the read
+	// needs a trusted session it does not have, so it would fail every time and report
+	// "unknown" — which reads as a fault rather than as "pair it first".
+	wifi := tools.WifiSyncUnknown
+	if pair == tools.Paired && dev.Reachable {
+		if got, err := s.Tools.WifiSync(r.Context(), udid); err == nil {
+			wifi = got
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"device":    dev,
+		"pair":      pair,
+		"wifi_sync": wifi,
+		"transport": s.Tools.Transport(udid),
+		// Whether the controls can work at all, so the UI can explain a disabled button
+		// instead of offering one that always fails.
+		"can_pair": s.Tools.PairingWritable(),
+	})
+}
+
+func (s *Server) devicePair(w http.ResponseWriter, r *http.Request) {
+	if err := s.Tools.Pair(r.Context(), r.PathValue("udid")); err != nil {
+		s.failPairing(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) deviceUnpair(w http.ResponseWriter, r *http.Request) {
+	if err := s.Tools.Unpair(r.Context(), r.PathValue("udid")); err != nil {
+		s.failPairing(w, err)
+		return
+	}
+	// The icon cache is keyed by udid and is meaningless for a device this host can no longer
+	// talk to. Dropping it here keeps an unpair from leaving several megabytes of pictures of
+	// somebody else's apps on disk.
+	if s.DeviceIcons != nil {
+		_ = s.DeviceIcons.Forget(r.PathValue("udid"))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+type wifiSyncReq struct {
+	Enable bool `json:"enable"`
+}
+
+func (s *Server) deviceWifiSync(w http.ResponseWriter, r *http.Request) {
+	var req wifiSyncReq
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if err := s.Tools.SetWifiSync(r.Context(), r.PathValue("udid"), req.Enable); err != nil {
+		if errors.Is(err, tools.ErrWifiSyncNotApplied) {
+			writeErr(w, http.StatusConflict, "not_applied",
+				"The device accepted the change and did not apply it. Unlock it and try again.")
+			return
+		}
+		s.fail(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// failPairing maps the pairing errors onto the four things a person can actually do about them.
+// Each one is a different physical action, which is the whole reason they are separate values.
+func (s *Server) failPairing(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, tools.ErrTrustPending):
+		writeErr(w, http.StatusConflict, "trust_pending",
+			"The device is asking whether to trust this computer. Unlock it, tap Trust, then pair again.")
+	case errors.Is(err, tools.ErrPasscodeLocked):
+		writeErr(w, http.StatusConflict, "locked",
+			"The device is locked. Unlock it and try again.")
+	case errors.Is(err, tools.ErrNeedsUSB):
+		writeErr(w, http.StatusConflict, "needs_usb",
+			"Pairing happens over USB. Connect the device with a cable and try again — after it is paired, Wi-Fi is enough.")
+	case errors.Is(err, tools.ErrPairingReadOnly):
+		writeErr(w, http.StatusConflict, "read_only",
+			"The pairing directory is mounted read-only, so springback cannot write a pairing record. Mount it read-write, or pair the device with whatever else owns it.")
+	default:
+		s.fail(w, err)
+	}
+}

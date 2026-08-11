@@ -64,6 +64,10 @@ func TestAPIIsClosedUntilSignedIn(t *testing.T) {
 
 	protected := []struct{ method, path string }{
 		{"GET", "/api/devices"},
+		{"GET", "/api/devices/UDID"},
+		{"POST", "/api/devices/UDID/pair"},
+		{"POST", "/api/devices/UDID/unpair"},
+		{"POST", "/api/devices/UDID/wifi-sync"},
 		{"GET", "/api/devices/UDID/apps"},
 		{"GET", "/api/devices/UDID/installed"},
 		{"POST", "/api/devices/UDID/install"},

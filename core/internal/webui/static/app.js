@@ -274,7 +274,7 @@ function renderDevices() {
     el("h2", { className: "screen", textContent: "Devices" }),
     el("p", {
       className: "screen-hint",
-      textContent: "Tap a device to see which of its apps are no longer in any App Store.",
+      textContent: "Tap a device for its apps, its pairing, and its Wi-Fi sync setting.",
     }),
   ];
 
@@ -286,7 +286,7 @@ function renderDevices() {
     }));
   }
 
-  for (const d of devices) frag.push(deviceCard(d));
+  frag.push(el("div", { className: "list" }, devices.map(deviceRow)));
   root.replaceChildren(...frag);
 }
 
@@ -303,11 +303,15 @@ function deviceLabel(d) {
   return `${name} · ${d.udid.slice(-6)}`;
 }
 
-function deviceCard(d) {
-  // NO "N at risk" BADGE HERE. It duplicated the summary line directly beneath it — and the
-  // summary is the better statement of the two, because it carries the denominator ("11 of 162")
-  // and what was checked. Two counts of the same thing in one card is one too many.
-  const head = el("button", { className: "row device-row" }, [
+// deviceRow is a link to the device's own page.
+//
+// IT USED TO EXPAND IN PLACE, and that stopped being the right shape once a device grew pairing
+// controls and a Wi-Fi switch: those are settings for one device, not a list of apps, and an
+// accordion holding two hundred rows plus a settings panel is a page pretending to be a row. It
+// is an <a href> for the same reason every other row is — the browser drives the navigation, the
+// back gesture and the scroll restoration, and none of it has to be reimplemented.
+function deviceRow(d) {
+  const r = el("a", { className: "row device-row", href: `/device/${encodeURIComponent(d.udid)}` }, [
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
@@ -318,79 +322,245 @@ function deviceCard(d) {
     el("div", { className: "row-right" }, [
       d.reachable
         ? el("span", { className: "pill live", textContent: "reachable" })
-        // "not currently reachable", never "gone" (SPEC §3): a sleeping iPhone drops off
-        // mDNS entirely, and that is normal.
+        // "not currently reachable", never "gone": a sleeping iPhone drops off mDNS
+        // entirely, and that is normal.
         : el("span", { className: "pill asleep", textContent: "asleep" }),
+      el("span", { className: "chev", textContent: "›" }),
     ]),
   ]);
-
-  const body = el("div", { className: "device-body", hidden: !expanded.has(d.udid) });
-  head.onclick = async () => {
-    if (!d.reachable) {
-      toast("That device is asleep or off the network. Wake it and it will turn up here.", true);
-      return;
-    }
-    if (expanded.has(d.udid)) {
-      expanded.delete(d.udid);
-      body.hidden = true;
-      return;
-    }
-    expanded.add(d.udid);
-    body.hidden = false;
-    await loadApps(d, body);
-  };
-  if (expanded.has(d.udid)) loadApps(d, body);
-
-  return el("div", { className: "card" }, [head, body]);
+  return r;
 }
 
-const expanded = new Set();
+// ---------------------------------------------------------------------------
+// One device: its settings, and its apps.
+// ---------------------------------------------------------------------------
 
-async function loadApps(d, body) {
-  const cached = appsCache.get(d.udid);
-  if (cached) { renderApps(d, cached, body); return; }
+// deviceState caches the pairing/Wi-Fi answer per udid. Two extra device round trips, so not
+// something to repeat on every poll-driven re-render.
+const deviceState = new Map();
+let deviceUDID = null;
+// appFilter is the search box's text, kept out of the DOM so a re-render cannot lose it.
+let appFilter = "";
 
-  body.replaceChildren(el("p", {
-    className: "hint spinner",
-    textContent: "Reading the app list and asking each App Store about it. The first scan takes about half a minute.",
-  }));
+async function loadDeviceState(udid) {
   try {
-    const payload = await api(`/api/devices/${encodeURIComponent(d.udid)}/apps`);
-    appsCache.set(d.udid, payload);
-    renderApps(d, payload, body);
-    renderDevices();
-  } catch (e) {
-    body.replaceChildren(el("div", { className: "error", textContent: e.message }));
-  }
+    deviceState.set(udid, await api(`/api/devices/${encodeURIComponent(udid)}`));
+  } catch { /* the page says what it knows */ }
+  if (current === "device") renderDevice();
 }
 
-function renderApps(d, payload, body) {
-  const { apps, storefronts, total, delisted, unknown } = payload;
-
-  const summary = el("div", { className: "summary" });
-  if (delisted > 0) {
-    // The count line SPEC §6 asks for, in its own words.
-    summary.append(el("p", { className: "summary-line" }, [
-      el("strong", { textContent: `${delisted} of ${total} apps` }),
-      ` on this ${d.name || "device"} ${delisted === 1 ? "is" : "are"} no longer in the App Store.`,
-    ]));
-  } else {
-    summary.append(el("p", {
-      className: "summary-line",
-      textContent: `All ${total} apps here are still in an App Store somewhere.`,
-    }));
+async function loadApps(udid) {
+  if (appsCache.has(udid)) return;
+  try {
+    appsCache.set(udid, await api(`/api/devices/${encodeURIComponent(udid)}/apps`));
+  } catch (e) {
+    appsCache.set(udid, { error: e.message, apps: [] });
   }
+  if (current === "device") renderDevice();
+}
+
+function renderDevice() {
+  const root = $("#screen-device");
+  const udid = deviceUDID;
+  if (!udid) { root.replaceChildren(); return; }
+
+  const st = deviceState.get(udid) || {};
+  const d = st.device || devices.find((x) => x.udid === udid) || { udid };
+  const payload = appsCache.get(udid);
+
+  const back = el("button", { className: "detail-back", type: "button" }, ["‹ Devices"]);
+  back.onclick = () => { if (history.length > 1) history.back(); else navigate("/"); };
+
+  const head = el("div", { className: "detail-head" }, [
+    el("h2", { className: "screen", textContent: deviceLabel(d) }),
+    d.reachable
+      ? el("span", { className: "pill live", textContent: "reachable" })
+      : el("span", { className: "pill asleep", textContent: "asleep" }),
+  ]);
+
+  const facts = [];
+  const fact = (k, v) => { if (v) facts.push(el("div", { className: "fact" }, [
+    el("dt", { textContent: k }), el("dd", { textContent: String(v) }),
+  ])); };
+  fact("Model", d.product_type);
+  fact("iOS", d.ios);
+  fact("Region", d.region);
+  fact("UDID", d.udid);
+  fact("Connected over", st.transport === "usb" ? "USB" : st.transport === "network" ? "Wi-Fi" : null);
+
+  const blocks = [back, head, el("dl", { className: "facts" }, facts)];
+  blocks.push(...pairingBlock(udid, st));
+  blocks.push(...appsBlock(udid, d, payload));
+  root.replaceChildren(...blocks);
+}
+
+// pairingBlock is the settings half of the page: is this host trusted by the device, and will
+// the device answer when it is not plugged in.
+function pairingBlock(udid, st) {
+  const out = [el("h3", { className: "sub-head", textContent: "Pairing" })];
+
+  if (st.can_pair === false) {
+    // A read-only pairing directory is the correct setup when something else owns the
+    // records, so this explains rather than complains.
+    out.push(el("p", { className: "note", textContent:
+      "The pairing directory is mounted read-only, so springback can read pairing records but not write them. " +
+      "Pair the device with whatever owns them, or mount it read-write." }));
+  }
+
+  const pair = st.pair || "unknown";
+  const label = pair === "paired" ? "Paired with this host"
+    : pair === "unpaired" ? "Not paired with this host"
+    : "Pairing state unknown — the device is not answering";
+  out.push(el("p", { className: "hint", textContent: label }));
+
+  if (pair === "unpaired" && st.can_pair !== false) {
+    const usb = st.transport === "usb";
+    out.push(el("p", { className: "hint", textContent: usb
+      ? "Unlock the device and tap Trust when it asks. Pairing only needs the cable once — after that Wi-Fi is enough."
+      : "Connect the device with a USB cable to pair it. Wireless pairing exists in the protocol but only for Apple TV." }));
+    const b = el("button", { className: "primary wide", textContent: "Pair this device" });
+    b.disabled = !usb;
+    b.onclick = async () => {
+      b.disabled = true; b.textContent = "Pairing…";
+      try {
+        await api(`/api/devices/${encodeURIComponent(udid)}/pair`, { method: "POST" });
+        toast("Paired.");
+      } catch (e) { toast(e.message, true); }
+      b.textContent = "Pair this device"; b.disabled = false;
+      await loadDeviceState(udid);
+    };
+    out.push(b);
+  }
+
+  if (pair === "paired" && st.can_pair !== false) {
+    const b = el("button", { className: "danger wide", textContent: "Unpair" });
+    b.onclick = async () => {
+      if (!confirm("Unpair this device? springback will not be able to reach it again until it is paired over USB.")) return;
+      b.disabled = true;
+      try {
+        await api(`/api/devices/${encodeURIComponent(udid)}/unpair`, { method: "POST" });
+        toast("Unpaired.");
+      } catch (e) { toast(e.message, true); }
+      b.disabled = false;
+      await loadDeviceState(udid);
+    };
+    out.push(b);
+  }
+
+  // Wi-Fi sync is only meaningful once paired: reading the flag needs a trusted session, and
+  // writing it needs one too.
+  if (pair === "paired") {
+    out.push(el("h3", { className: "sub-head", textContent: "Wi-Fi sync" }));
+    const wifi = st.wifi_sync || "unknown";
+    out.push(el("p", { className: "hint", textContent:
+      "With this off the device only answers over USB — it drops off the network entirely, and springback stops seeing it." }));
+
+    if (wifi === "unknown") {
+      out.push(el("p", { className: "hint", textContent: "Could not read the setting from this device." }));
+    } else {
+      const on = wifi === "on";
+      const b = el("button", { className: on ? "danger wide" : "primary wide",
+        textContent: on ? "Turn Wi-Fi sync off" : "Turn Wi-Fi sync on" });
+      b.onclick = async () => {
+        if (on && !confirm("Turn Wi-Fi sync off? The device will leave the network and only answer over USB.")) return;
+        b.disabled = true;
+        try {
+          await api(`/api/devices/${encodeURIComponent(udid)}/wifi-sync`, {
+            method: "POST", body: JSON.stringify({ enable: !on }),
+          });
+          toast(on ? "Wi-Fi sync off." : "Wi-Fi sync on.");
+        } catch (e) { toast(e.message, true); }
+        b.disabled = false;
+        await loadDeviceState(udid);
+      };
+      out.push(b);
+    }
+  }
+  return out;
+}
+
+// appsBlock is the at-risk scan, its summary, and the search box over it.
+function appsBlock(udid, d, payload) {
+  const out = [el("h3", { className: "sub-head", textContent: "Apps" })];
+
+  if (!d.reachable) {
+    out.push(el("p", { className: "note", textContent:
+      "This device is not answering, so its apps cannot be listed. A sleeping iPhone drops off the network entirely; wake it and come back." }));
+    return out;
+  }
+  if (!payload) {
+    loadApps(udid);
+    out.push(el("p", { className: "hint spinner", textContent:
+      "Reading the app list and asking each App Store about it. The first scan takes about half a minute." }));
+    return out;
+  }
+  if (payload.error) {
+    out.push(el("div", { className: "error", textContent: payload.error }));
+    return out;
+  }
+
+  const { apps, storefronts, total, delisted, unknown } = payload;
+  const summary = el("div", { className: "summary" });
+  summary.append(el("p", { className: "summary-line" }, delisted > 0 ? [
+    el("strong", { textContent: `${delisted} of ${total} apps` }),
+    ` on this ${d.name || "device"} ${delisted === 1 ? "is" : "are"} no longer in the App Store.`,
+  ] : [`All ${total} apps here are still in an App Store somewhere.`]));
   summary.append(el("p", {
     className: "sub",
     textContent:
-      `Checked ${storefronts.join(", ")} plus each app's own storefront. An app counts as ` +
+      `Checked ${(storefronts || []).join(", ")} plus each app's own storefront. An app counts as ` +
       `delisted only when every one of them comes back empty.` +
       (payload.not_listed ? ` ${payload.not_listed} never had a public listing and are not counted.` : "") +
       (unknown ? ` ${unknown} could not be checked.` : ""),
   }));
+  out.push(summary);
 
-  body.replaceChildren(summary, el("div", { className: "list" }, apps.map((a) => appRow(a, d))));
+  // SEARCH, because two hundred rows is past what scrolling answers. Filtered here rather than
+  // by re-asking the server: the whole list is already in hand and a round trip per keystroke
+  // would be slower and worse.
+  const search = el("input", {
+    type: "search", className: "search", id: "app-search",
+    placeholder: `Search ${total} apps`, value: appFilter,
+    autocapitalize: "none", autocorrect: "off", spellcheck: false,
+  });
+  search.oninput = () => {
+    appFilter = search.value;
+    // Only the list is redrawn, so the field keeps focus and the caret stays put — a full
+    // re-render would drop the keyboard on a phone after every letter.
+    drawAppList(udid, apps, $("#app-list"), $("#app-count"));
+  };
+  out.push(el("div", { className: "search-wrap" }, [search]));
+  out.push(el("p", { className: "hint", id: "app-count" }));
+
+  const list = el("div", { className: "list", id: "app-list" });
+  out.push(list);
+  // Deferred until the nodes are in the document, since drawAppList looks them up by id.
+  queueMicrotask(() => drawAppList(udid, apps, $("#app-list"), $("#app-count")));
+  return out;
 }
+
+function matchesFilter(a, needle) {
+  if (!needle) return true;
+  const hay = `${a.store_name || ""} ${a.name || ""} ${a.bundle_id || ""} ${a.artist || ""}`.toLowerCase();
+  return hay.includes(needle);
+}
+
+function drawAppList(udid, apps, list, count) {
+  if (!list) return;
+  const needle = appFilter.trim().toLowerCase();
+  const shown = apps.filter((a) => matchesFilter(a, needle));
+  const device = devices.find((x) => x.udid === udid) || { udid };
+  list.replaceChildren(...shown.map((a) => appRow(a, device)));
+  if (count) {
+    count.textContent = needle
+      ? `${shown.length} of ${apps.length} match “${appFilter.trim()}”.`
+      : "";
+  }
+  if (needle && shown.length === 0) {
+    list.replaceChildren(el("p", { className: "empty", textContent: "Nothing matches that." }));
+  }
+}
+
 
 // appRow is deliberately three lines and a chip — it has to be readable on a phone, and the
 // details live one tap away rather than in a row that scrolls sideways.
@@ -1003,19 +1173,6 @@ let pendingSlug = null;
 // Navigation + auto-refresh
 // ---------------------------------------------------------------------------
 
-// rerenderCurrent is what the TIMERS call — the 5s device poll and the 1s job poll.
-//
-// THE ACCOUNTS SCREEN IS DELIBERATELY EXCLUDED. It is the only screen holding text the user is
-// part-way through typing, and rebuilding it would clear the email, the password and the
-// verification code from under them — the same defect as the 2FA re-render, arriving on a timer
-// instead of a response. Nothing on that screen changes on its own, so there is nothing to
-// refresh; it is re-rendered explicitly after an action completes.
-function rerenderCurrent() {
-  if (current === "devices") renderDevices();
-  if (current === "library") renderLibrary();
-  if (current === "app") renderAppDetail();
-}
-
 // ---------------------------------------------------------------------------
 // Routing — the browser owns navigation; this app only owns rendering.
 //
@@ -1046,6 +1203,7 @@ function routeFor(url) {
   const path = url.pathname;
   let m;
   if ((m = path.match(/^\/library\/(\d+)$/))) return { screen: "app", libraryID: m[1] };
+  if ((m = path.match(/^\/device\/([^/]+)$/))) return { screen: "device", udid: decodeURIComponent(m[1]) };
   if ((m = path.match(/^\/device\/([^/]+)\/([^/]+)$/))) {
     return { screen: "app", udid: decodeURIComponent(m[1]), bundle: decodeURIComponent(m[2]) };
   }
@@ -1099,6 +1257,20 @@ async function renderRoute(url, { traverse = false } = {}) {
     return;
   }
 
+  if (route.screen === "device") {
+    // A DIFFERENT DEVICE MEANS A DIFFERENT PAGE, so the search box does not carry a filter
+    // from the last one over to a list it was never typed against.
+    if (deviceUDID !== route.udid) {
+      deviceUDID = route.udid;
+      appFilter = "";
+    }
+    showScreen("device");
+    renderDevice();
+    if (!deviceState.has(route.udid)) loadDeviceState(route.udid);
+    if (!traverse) startAtTop();
+    return;
+  }
+
   showScreen(route.screen);
   if (!traverse) startAtTop();
   // ON A TRAVERSAL, DO NOT REBUILD. The content is still in the document from last time, and
@@ -1116,11 +1288,11 @@ async function renderRoute(url, { traverse = false } = {}) {
 // back arrow has left the header entirely and now lives on the detail screen itself.
 function showScreen(screen) {
   current = screen;
-  const lit = screen === "app" ? parentTab() : screen;
+  const lit = (screen === "app" || screen === "device") ? parentTab() : screen;
   for (const b of document.querySelectorAll("nav a")) {
     b.classList.toggle("active", b.dataset.screen === lit);
   }
-  for (const s of ["devices", "library", "accounts", "app"]) {
+  for (const s of ["devices", "library", "accounts", "device", "app"]) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
 }
@@ -1134,16 +1306,23 @@ function renderScreen(screen) {
   if (screen === "devices") renderDevices();
   if (screen === "library") renderLibrary();
   if (screen === "accounts") refreshAccounts().then(renderAccountsList);
+  if (screen === "device") renderDevice();
   if (screen === "app") renderAppDetail();
 }
 
 // rerenderCurrent is what the pollers call — never a navigation, just fresher data.
+//
+// TWO SCREENS ARE EXCLUDED WHILE SOMEONE IS TYPING ON THEM, which is the same defect twice over:
+// Accounts holds an email, a password and a verification code, and the device page holds a
+// search box. Rebuilding either on a timer takes the text, the caret and — on a phone — the
+// keyboard away mid-word. Accounts is excluded outright because nothing on it changes on its
+// own; the device page only while its search field has the focus, since its pairing state and
+// reachability genuinely do change underneath.
 function rerenderCurrent() {
   if (current === "devices") renderDevices();
   if (current === "library") renderLibrary();
   if (current === "app") renderAppDetail();
-  // Accounts is excluded: it is the only screen holding text someone is part-way through
-  // typing, and nothing on it changes on its own.
+  if (current === "device" && document.activeElement !== $("#app-search")) renderDevice();
 }
 
 // navigate is used only where a link cannot be (a row that is really a button).
@@ -1362,8 +1541,16 @@ async function boot() {
 // user's text size, and on a notched phone with the safe-area inset.
 function measureHeader() {
   const h = document.querySelector("header").getBoundingClientRect().height;
-  document.documentElement.style.setProperty("--header-h", `${Math.round(h)}px`);
+  // A HEIGHT OF ZERO IS NOT A MEASUREMENT. While the gate is up the header is display:none, and
+  // this used to run once at parse time — which is exactly then. The result was a body with no
+  // top padding and a banner tucked underneath the header once the app appeared. Ignoring zero
+  // keeps the last real value until there is a new one.
+  if (h > 0) document.documentElement.style.setProperty("--header-h", `${Math.round(h)}px`);
 }
 measureHeader();
 addEventListener("resize", measureHeader);
 addEventListener("orientationchange", measureHeader);
+// Re-measured whenever the header actually changes size, which covers the moment it stops being
+// hidden as well as a text-size change. Cheaper and more reliable than remembering to call this
+// from every place that might affect it.
+if (window.ResizeObserver) new ResizeObserver(measureHeader).observe(document.querySelector("header"));

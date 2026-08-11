@@ -67,6 +67,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 
 	mux.HandleFunc("GET /api/devices", s.listDevices)
+	mux.HandleFunc("GET /api/devices/{udid}", s.deviceDetail)
+	mux.HandleFunc("POST /api/devices/{udid}/pair", s.devicePair)
+	mux.HandleFunc("POST /api/devices/{udid}/unpair", s.deviceUnpair)
+	mux.HandleFunc("POST /api/devices/{udid}/wifi-sync", s.deviceWifiSync)
 	mux.HandleFunc("GET /api/devices/{udid}/apps", s.deviceApps)
 	mux.HandleFunc("GET /api/devices/{udid}/installed", s.deviceInstalled)
 	mux.HandleFunc("POST /api/devices/{udid}/install", s.install)

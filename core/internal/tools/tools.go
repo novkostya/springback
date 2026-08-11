@@ -169,6 +169,26 @@ type Tools interface {
 	PairedUDIDs(ctx context.Context) ([]string, error)
 	// DeviceValue reads one lockdown key, e.g. DeviceName or RegionInfo.
 	DeviceValue(ctx context.Context, udid, key string) (string, error)
+
+	// PairStatus reports whether this host holds a valid pairing record. PairUnknown means
+	// the device could not be asked, which is NOT the same as "not paired".
+	PairStatus(ctx context.Context, udid string) (PairState, error)
+	// Pair runs the pairing handshake. Needs USB, an unlocked device, and somebody to tap
+	// Trust on it — see the error sentinels in pairing.go for the three ways that goes wrong.
+	Pair(ctx context.Context, udid string) error
+	// Unpair drops this host's pairing record.
+	Unpair(ctx context.Context, udid string) error
+	// PairingWritable reports whether pairing records can be written at all. False when the
+	// directory is mounted read-only, which is the right setup when another tool owns it.
+	PairingWritable() bool
+	// Transport reports how a device was last seen: "usb" or "network". Pairing needs the
+	// cable, and the UI says so rather than offering a button that cannot work.
+	Transport(udid string) string
+
+	// WifiSync reads the flag that decides whether a device answers when it is not plugged in.
+	WifiSync(ctx context.Context, udid string) (WifiSyncState, error)
+	// SetWifiSync writes it and confirms the device applied it.
+	SetWifiSync(ctx context.Context, udid string, enable bool) error
 	// ListApps returns the user-installed apps on a device.
 	ListApps(ctx context.Context, udid string) ([]InstalledApp, error)
 	// InstallApp pushes an .ipa. onProgress may be nil.

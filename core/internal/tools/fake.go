@@ -53,6 +53,10 @@ type Fake struct {
 	authed    map[string]Account
 	pending   map[string]bool
 	LookupErr map[string]bool
+	// Pairing state, so the device page can be exercised without hardware.
+	unpaired   map[string]bool
+	trustAsked map[string]bool
+	wifiOff    map[string]bool
 }
 
 type fakeDevice struct {
@@ -154,6 +158,11 @@ func NewFake() *Fake {
 		authed:    map[string]Account{},
 		pending:   map[string]bool{},
 		LookupErr: map[string]bool{},
+		// The iPad starts UNPAIRED so the pairing flow is on screen by default rather than
+		// only when someone constructs it.
+		unpaired:   map[string]bool{ipad: true},
+		trustAsked: map[string]bool{},
+		wifiOff:    map[string]bool{},
 	}
 	return f
 }
@@ -485,4 +494,99 @@ func validStorefront(cc string) bool {
 		return true
 	}
 	return false
+}
+
+// ---------------------------------------------------------------------------
+// Pairing and Wi-Fi sync
+//
+// THE FAKE PAIRS ON THE SECOND ATTEMPT, NOT THE FIRST. A real pairing almost always comes back
+// "accept the trust dialog" once, because nobody is holding the phone when the button is pressed
+// — so a fake that succeeds immediately exercises only the path that rarely happens, and the
+// screen that has to explain the trust dialog is never rendered during development.
+// ---------------------------------------------------------------------------
+
+func (f *Fake) PairStatus(ctx context.Context, udid string) (PairState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.devices[udid]
+	if !ok {
+		return PairUnknown, nil
+	}
+	if !d.awake {
+		// Asleep says nothing about the pairing record, and saying "unpaired" here would
+		// offer a Pair button for a device that is merely somewhere else.
+		return PairUnknown, nil
+	}
+	if f.unpaired[udid] {
+		return Unpaired, nil
+	}
+	return Paired, nil
+}
+
+func (f *Fake) Pair(ctx context.Context, udid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.devices[udid]; !ok {
+		return ErrNeedsUSB
+	}
+	if !f.trustAsked[udid] {
+		f.trustAsked[udid] = true
+		return ErrTrustPending
+	}
+	delete(f.unpaired, udid)
+	delete(f.trustAsked, udid)
+	return nil
+}
+
+func (f *Fake) Unpair(ctx context.Context, udid string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.devices[udid]; !ok {
+		return ErrNeedsUSB
+	}
+	f.unpaired[udid] = true
+	return nil
+}
+
+// PairingWritable is true here: the fake is for exercising the flow, and the read-only case is a
+// deployment fact with no device behind it. main.go reports the real answer.
+func (f *Fake) PairingWritable() bool { return true }
+
+func (f *Fake) WifiSync(ctx context.Context, udid string) (WifiSyncState, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.devices[udid]
+	if !ok || !d.awake {
+		return WifiSyncUnknown, nil
+	}
+	if f.wifiOff[udid] {
+		return WifiSyncOff, nil
+	}
+	return WifiSyncOn, nil
+}
+
+func (f *Fake) SetWifiSync(ctx context.Context, udid string, enable bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.devices[udid]
+	if !ok || !d.awake {
+		return ErrDeviceUnreachable
+	}
+	if enable {
+		delete(f.wifiOff, udid)
+	} else {
+		f.wifiOff[udid] = true
+	}
+	return nil
+}
+
+// Transport reports the iPhone fixture as being on the cable and everything else on Wi-Fi, so
+// both the "pair me" and the "plug me in first" paths are reachable without hardware.
+func (f *Fake) Transport(udid string) string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if d, ok := f.devices[udid]; ok && d.awake {
+		return "usb"
+	}
+	return "network"
 }

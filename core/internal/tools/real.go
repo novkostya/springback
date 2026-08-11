@@ -46,6 +46,11 @@ type Real struct {
 	// ipatool actually printed, and that output was being discarded on every path. Off unless
 	// --debug is passed, since the alternative is writing Apple's replies to a log by default.
 	Debug func(string)
+
+	// transports remembers which link each device last answered on, because every CLI here
+	// has to be told: `ideviceinfo -n` fails on a device that is only on the cable, and the
+	// bare form fails on one that is only on Wi-Fi.
+	transports sync.Map
 }
 
 // NewReal builds a Real with the defaults every deployment uses.
@@ -90,25 +95,73 @@ func (r *Real) deviceEnv() []string {
 	return []string{"USBMUXD_SOCKET_ADDRESS=" + r.MuxAddr}
 }
 
+// ListDeviceUDIDs returns everything the muxer can currently see, over either transport.
+//
+// BOTH TRANSPORTS, WHICH IS A CHANGE. It used to ask only `idevice_id -n`, because quince owned
+// the USB bus and springback's whole job arrived over netmuxd. Standing alone, the device a user
+// has just plugged in to pair is on USB and nowhere else — asking only about the network would
+// show them an empty screen and no way out of it.
+//
+// The transport each device answered on is remembered, because every other CLI needs to be told:
+// `ideviceinfo -n` fails on a USB device and `ideviceinfo` without it fails on a network one.
 func (r *Real) ListDeviceUDIDs(ctx context.Context) ([]string, error) {
-	// -n is network-only, which is the whole transport springback has: netmuxd serves Wi-Fi
-	// devices over TCP and springback has no USB access by design.
-	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "idevice_id", "-n")
-	if err != nil {
-		// An empty list exits non-zero on some builds. Nothing on stdout plus a failure is
-		// the ordinary "everything is asleep" case, NOT an error to show the user.
-		if strings.TrimSpace(out) == "" {
-			return nil, nil
-		}
-		return nil, err
-	}
+	seen := map[string]bool{}
 	var udids []string
-	for _, line := range strings.Split(out, "\n") {
-		if u := strings.TrimSpace(line); u != "" {
-			udids = append(udids, u)
+
+	collect := func(flag, transport string) error {
+		out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "idevice_id", flag)
+		if err != nil {
+			// An empty list exits non-zero on some builds. Nothing on stdout plus a
+			// failure is the ordinary "nothing on this transport" case, NOT an error.
+			if strings.TrimSpace(out) == "" {
+				return nil
+			}
+			return err
 		}
+		for _, line := range strings.Split(out, "\n") {
+			u := strings.TrimSpace(line)
+			if u == "" || seen[u] {
+				continue
+			}
+			seen[u] = true
+			udids = append(udids, u)
+			r.transports.Store(u, transport)
+		}
+		return nil
+	}
+
+	// USB first, so a device on both wins the cable: it is the faster link and the only one
+	// that can pair.
+	usbErr := collect("-l", transportUSB)
+	netErr := collect("-n", transportNetwork)
+	if usbErr != nil && netErr != nil {
+		return nil, netErr
 	}
 	return udids, nil
+}
+
+const (
+	transportUSB     = "usb"
+	transportNetwork = "network"
+)
+
+// netFlag is the transport flag for one device: `-n` for a device reached over the network, and
+// nothing at all for one on the cable. Defaults to `-n` for a device never seen in a listing,
+// which is the case for every device that is currently asleep — and the transport it will come
+// back on.
+func (r *Real) netFlag(udid string) []string {
+	if v, ok := r.transports.Load(udid); ok && v.(string) == transportUSB {
+		return nil
+	}
+	return []string{"-n"}
+}
+
+// Transport reports how a device was last seen, for the UI to show and for pairing to refuse.
+func (r *Real) Transport(udid string) string {
+	if v, ok := r.transports.Load(udid); ok {
+		return v.(string)
+	}
+	return transportNetwork
 }
 
 // PairedUDIDs lists the pairing records. Each is <udid>.plist; SystemConfiguration.plist is the
@@ -137,7 +190,7 @@ func (r *Real) PairedUDIDs(ctx context.Context) ([]string, error) {
 }
 
 func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error) {
-	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinfo", "-n", "-u", udid, "-k", key)
+	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinfo", append(r.netFlag(udid), "-u", udid, "-k", key)...)
 	if err != nil {
 		return "", err
 	}
@@ -156,19 +209,19 @@ func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error
 // id, not an empty screen. Degrading beats disappearing.
 func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error) {
 	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "",
-		"ideviceinstaller", "-n", "-u", udid, "list", "--user", "--xml",
-		"-a", "CFBundleIdentifier",
-		"-a", "CFBundleShortVersionString",
-		"-a", "CFBundleDisplayName",
-		"-a", "CFBundleName",
-		"-a", "iTunesMetadata")
+		"ideviceinstaller", append(r.netFlag(udid), "-u", udid, "list", "--user", "--xml",
+			"-a", "CFBundleIdentifier",
+			"-a", "CFBundleShortVersionString",
+			"-a", "CFBundleDisplayName",
+			"-a", "CFBundleName",
+			"-a", "iTunesMetadata")...)
 	if err == nil {
 		if apps := parseAppListXML(out); len(apps) > 0 {
 			return apps, nil
 		}
 	}
 
-	out, csvErr := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinstaller", "-n", "-u", udid, "list", "--user")
+	out, csvErr := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinstaller", append(r.netFlag(udid), "-u", udid, "list", "--user")...)
 	if csvErr != nil {
 		// Report the FIRST failure if there was one: it is the call that was supposed to
 		// work, and its error is the one that explains the device.
@@ -184,7 +237,7 @@ func (r *Real) InstallApp(ctx context.Context, udid, ipaPath string, onProgress 
 	ctx, cancel := context.WithTimeout(ctx, r.InstallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ideviceinstaller", "-n", "-u", udid, "install", ipaPath)
+	cmd := exec.CommandContext(ctx, "ideviceinstaller", append(r.netFlag(udid), "-u", udid, "install", ipaPath)...)
 	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin"}, r.deviceEnv()...)
 
 	stdout, err := cmd.StdoutPipe()
