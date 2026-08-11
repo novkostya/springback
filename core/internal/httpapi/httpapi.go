@@ -520,6 +520,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 		"id":      id,
 		"checked": res.Checked,
 		"status":  res.Status,
+		"version": res.Version,
 		"errors":  res.Errors,
 	})
 }

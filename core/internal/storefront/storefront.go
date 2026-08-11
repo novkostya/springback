@@ -77,7 +77,9 @@ type Result struct {
 	// delisted app by definition — no storefront has it. That used to mean the id had to be
 	// typed in by hand (SPEC §4); it no longer does, because the device's own purchase
 	// receipt carries the id whether or not the listing still exists. See tools/applist.go.
-	TrackID int64    `json:"track_id,omitempty"`
+	TrackID int64 `json:"track_id,omitempty"`
+	// Version is what the store sells RIGHT NOW, which is how a stale library copy is spotted.
+	Version string   `json:"version,omitempty"`
 	Checked []string `json:"checked"`
 	Errors  []string `json:"errors,omitempty"`
 }
@@ -314,6 +316,7 @@ func (r *Resolver) query(ctx context.Context, bundleID string, fronts []string) 
 			res.Status = Available
 			if res.TrackID == 0 {
 				res.TrackID = l.TrackID
+				res.Version = l.Version
 			}
 		}
 	}

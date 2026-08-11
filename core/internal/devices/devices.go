@@ -33,6 +33,9 @@ type App struct {
 	// iPhone: requesting the ITunesMetadata attribute returns nothing). Zero here is what
 	// makes the Archive button ask for the id once, per SPEC §4.
 	AppID int64 `json:"app_id,omitempty"`
+	// StoreVersion is what the App Store currently sells, when it is listed. Compared with the
+	// library copy to tell whether an archived app has fallen behind.
+	StoreVersion string `json:"store_version,omitempty"`
 	// InLibrary — already downloaded, so the button says so instead of offering to fetch the
 	// same ~500 MB again.
 	InLibrary bool `json:"in_library"`
@@ -197,6 +200,7 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 
 			res := s.Resolver.Resolve(ctx, ia.BundleID, appFronts)
 			a.Status, a.Checked, a.Errors = res.Status, res.Checked, res.Errors
+			a.StoreVersion = res.Version
 			// The receipt's id wins: it is the id of the app INSTALLED HERE. A
 			// storefront match is a good cross-check but can name a different edition.
 			if a.AppID == 0 {

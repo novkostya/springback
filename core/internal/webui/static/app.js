@@ -50,6 +50,23 @@ const fmtSize = (n) => {
 const fmtDate = (s) => (s ? new Date(s).toLocaleString() : "—");
 const statusLabel = (s) => (s === "not_listed" ? "not listed" : s.toUpperCase());
 
+// cmpVersions compares two App Store version strings: >0 if a is newer.
+//
+// Dot-separated numeric parts, compared as NUMBERS — "21.40.0" is newer than "21.31.3", which a
+// string comparison gets backwards. Non-numeric parts fall back to a string comparison of the
+// whole thing, which is at least stable; the versions Apple actually ships are numeric.
+function cmpVersions(a, b) {
+  const pa = String(a).split(".");
+  const pb = String(b).split(".");
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const na = parseInt(pa[i] ?? "0", 10);
+    const nb = parseInt(pb[i] ?? "0", 10);
+    if (Number.isNaN(na) || Number.isNaN(nb)) return a === b ? 0 : (a > b ? 1 : -1);
+    if (na !== nb) return na > nb ? 1 : -1;
+  }
+  return 0;
+}
+
 // emailForSlug turns an account directory name back into the Apple ID it stands for. The slug is
 // a filesystem-safe mangling (`novkostya@gmail.com` -> `novkostya-at-gmail.com`) and has no
 // business appearing in the UI, but it is what the library records against each download.
@@ -428,6 +445,50 @@ function renderAppDetail() {
     }
   }
 
+  // --- update ---
+  //
+  // WHY THIS MATTERS MORE THAN IT LOOKS. An app installed across regions — available in some
+  // storefront but not the one the device's Apple ID belongs to — CANNOT be updated by the App
+  // Store on the device: that account does not own it, so it never appears in Updates. springback
+  // is the only update channel it has, and without this the app is frozen at whatever version
+  // was first archived.
+  if (item) {
+    const upd = el("div", { className: "actions-block" });
+    // Two sources for the current store version, because this screen is reached two ways: from a
+    // device (the app record carries it) and from the Library (nothing does, so it is looked up).
+    const si = storeInfo.get(item.bundle_id);
+    const storeVersion = (a && a.store_version) || (si && si.version) || "";
+    const known = !!storeVersion;
+    loadStoreInfo(item.bundle_id);
+    if (known && storeVersion !== item.version) {
+      upd.append(
+        el("p", { className: "note warn-note" }, [
+          `The App Store has ${storeVersion}; your copy is ${item.version}. `,
+          "Re-download to update it — then install it again on any device below.",
+        ]),
+        (() => {
+          const b = el("button", { className: "primary wide", textContent: `Update to ${storeVersion}` });
+          b.onclick = () => archive(item.id, pickedAccount(null), item.name, b);
+          return b;
+        })(),
+      );
+    } else {
+      upd.append(
+        el("p", { className: "hint", textContent:
+          known
+            ? `Up to date — the App Store has ${storeVersion} and so do you.`
+            : "Re-download to pick up a newer version, if there is one. An app installed from another region " +
+              "cannot update itself on the device: its App Store account does not own it." }),
+        (() => {
+          const b = el("button", { className: "danger wide", textContent: "Re-download latest" });
+          b.onclick = () => archive(item.id, pickedAccount(null), item.name, b);
+          return b;
+        })(),
+      );
+    }
+    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(null), upd);
+  }
+
   // --- install, as a LIST OF DEVICES with one tap each ---
   if (item) {
     blocks.push(el("h3", { className: "sub-head", textContent: "Install on" }));
@@ -438,6 +499,7 @@ function renderAppDetail() {
     // Ask each reachable device what it already has, so a device that has this app says so
     // instead of offering to install it again. One cheap call per device, no store lookups.
     loadInstalledSets();
+    loadStoreInfo(item.bundle_id);
     blocks.push(el("p", { className: "note", textContent:
       "A different Apple ID on the device is fine. iOS asks for the Apple ID that owns the app the first time it is opened, not now — and it works from then on." }));
 
@@ -464,15 +526,22 @@ function renderAppDetail() {
 function installRow(d, item) {
   const job = jobFor(`install:${item.id}:${d.udid}`);
   const already = installedOn.get(d.udid);
-  const has = already && already.has(item.bundle_id);
+  const installedVersion = already ? already.get(item.bundle_id) : undefined;
+  const has = installedVersion !== undefined;
+  // NEWER, not merely DIFFERENT. Comparing for inequality offered "21.31.3 → 1.0" as an update,
+  // which is a downgrade — iOS refuses it, and proposing it is worse than saying nothing.
+  const stale = has && item.version && cmpVersions(item.version, installedVersion) > 0;
 
   let right;
   if (job) {
     // The progress lives IN THE ROW, next to the device it belongs to — a strip at the top
     // of the page cannot say which of three devices is being written to.
     right = ring(job.percent, job.stage);
-  } else if (has) {
+  } else if (has && !stale) {
     right = el("span", { className: "tick done", textContent: "installed" });
+  } else if (stale && d.reachable) {
+    // The device has an older build than the library copy — offer the update by name.
+    right = el("span", { className: "btn-inline", textContent: "Update" });
   } else if (!d.reachable) {
     right = el("span", { className: "pill asleep", textContent: "asleep" });
   } else {
@@ -484,15 +553,23 @@ function installRow(d, item) {
       el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
         className: "row-sub",
+        // THE VERSION DELTA IS THE SECOND HALF OF UPDATING. Store -> library is only useful
+        // if library -> device follows, and this row is where that happens: it names what is
+        // on the device and what is about to replace it.
         textContent: job
           ? (job.stage || "starting…")
-          : [d.product_type, d.ios && `iOS ${d.ios}`].filter(Boolean).join(" · "),
+          : stale
+            ? `${installedVersion} → ${item.version}`
+            : has
+              ? `${installedVersion} · up to date`
+              : [d.product_type, d.ios && `iOS ${d.ios}`].filter(Boolean).join(" · "),
       }),
     ]),
     el("div", { className: "row-right" }, [right]),
   ]);
 
-  r.disabled = !d.reachable || !!job;
+  // A stale copy is installable even though the app is present — that IS the update.
+  r.disabled = !d.reachable || !!job || (has && !stale);
   r.onclick = async () => {
     // Disable ON THE WAY IN, before the request is even sent. The reported bug was two taps
     // queuing two downloads, and the round trip is exactly the window a second tap lands in.
@@ -540,9 +617,30 @@ function jobFor(key) {
   return runningJobs.find((j) => j.key === key) || null;
 }
 
-// installedOn: udid -> Set of bundle ids currently on that device.
+// installedOn: udid -> Map of bundle id -> installed version.
+//
+// The VERSION is what turns "installed" into "out of date". A cross-region app cannot be updated
+// from the device's own App Store, so the only way anyone learns their copy is behind is if this
+// screen says so.
 const installedOn = new Map();
 const installedLoading = new Set();
+
+// storeInfo: bundle id -> { status, version } from the lookup, for a library item opened from the
+// Library screen, where there is no device app record to carry it.
+const storeInfo = new Map();
+const storeLoading = new Set();
+
+function loadStoreInfo(bundleID) {
+  if (!bundleID || storeInfo.has(bundleID) || storeLoading.has(bundleID)) return;
+  storeLoading.add(bundleID);
+  api(`/api/lookup?bundle_id=${encodeURIComponent(bundleID)}`)
+    .then((r) => {
+      storeInfo.set(bundleID, r);
+      if (current === "app") renderAppDetail();
+    })
+    .catch(() => { /* the screen simply offers a re-download instead of naming a version */ })
+    .finally(() => storeLoading.delete(bundleID));
+}
 
 // loadInstalledSets fills it lazily for the reachable devices, then re-renders once. Fetched
 // rather than derived from appsCache because that cache is only populated for devices the user
@@ -553,7 +651,7 @@ function loadInstalledSets() {
     installedLoading.add(d.udid);
     api(`/api/devices/${encodeURIComponent(d.udid)}/installed`)
       .then((list) => {
-        installedOn.set(d.udid, new Set(list.map((a) => a.bundle_id)));
+        installedOn.set(d.udid, new Map(list.map((a) => [a.bundle_id, a.version])));
         if (current === "app") renderAppDetail();
       })
       .catch(() => { /* a device that stopped answering simply shows Install */ })

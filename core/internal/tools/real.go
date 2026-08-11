@@ -591,9 +591,11 @@ func (r *Real) downloadPlain(ctx context.Context, home, passphrase string, appID
 type lookupResponse struct {
 	ResultCount int `json:"resultCount"`
 	Results     []struct {
-		TrackID   int64  `json:"trackId"`
-		TrackName string `json:"trackName"`
-		BundleID  string `json:"bundleId"`
+		TrackID     int64  `json:"trackId"`
+		TrackName   string `json:"trackName"`
+		Version     string `json:"version"`
+		ReleaseDate string `json:"currentVersionReleaseDate"`
+		BundleID    string `json:"bundleId"`
 	} `json:"results"`
 	ErrorMessage string `json:"errorMessage"`
 }
@@ -648,6 +650,8 @@ func (r *Real) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		res.Found = true
 		res.TrackID = lr.Results[0].TrackID
 		res.TrackName = lr.Results[0].TrackName
+		res.Version = lr.Results[0].Version
+		res.ReleaseDate = lr.Results[0].ReleaseDate
 	}
 	return res
 }

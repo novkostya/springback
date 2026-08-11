@@ -77,7 +77,12 @@ type StoreLookup struct {
 	Found     bool
 	TrackID   int64
 	TrackName string
-	Err       error
+	// Version is what the store currently sells. It is the only way to know a library copy
+	// has gone stale — and for an app installed across regions it is the only way at all,
+	// since the device's own App Store cannot update an app its account does not own.
+	Version     string
+	ReleaseDate string
+	Err         error
 }
 
 // Account is what `ipatool auth info` reports for one Apple ID.

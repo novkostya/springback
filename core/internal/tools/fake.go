@@ -39,7 +39,9 @@ type Fake struct {
 	// apps by udid.
 	apps map[string][]InstalledApp
 	// store maps bundle id -> the storefronts it is present in.
-	store map[string]map[string]int64
+	// storeVer is what those storefronts currently sell, so the update path can be exercised.
+	store    map[string]map[string]int64
+	storeVer map[string]string
 	// authed tracks which HOME directories have completed login, and pending2FA which are
 	// mid-2FA. `2fa@example.com` is the address that exercises the two-step form.
 	authed  map[string]Account
@@ -132,6 +134,18 @@ func NewFake() *Fake {
 			"info.tapestry.journal":    {"us": 6448124272, "ae": 6448124272},
 			// com.dreamgoods.officecapital and com.assetsonline.ios are in NO storefront.
 			// Their absence from this map is the fixture.
+		},
+		// Deliberately AHEAD of the versions the fake devices report, so "your copy is
+		// behind" is on screen by default rather than only when someone constructs it.
+		storeVer: map[string]string{
+			"com.google.ios.youtube":   "21.40.0",
+			"com.tinyspeck.chatlyio":   "26.09.01",
+			"ru.aviasales.app":         "9.31",
+			"ru.yandex.mobile.music":   "801",
+			"io.wio.retail":            "1.69.0",
+			"com.flydubai.app.booking": "6.8.29",
+			"ru.cardsmobile.wallet":    "6.63",
+			"info.tapestry.journal":    "5.2.1",
 		},
 		authed:    map[string]Account{},
 		pending:   map[string]bool{},
@@ -334,21 +348,27 @@ func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int6
 	defer func() { _ = fh.Close() }()
 
 	zw := zip.NewWriter(fh)
+	// The version the fake store sells, so "library is behind the store" and "device is behind
+	// the library" produce real numbers instead of a constant 1.0 that reads as a downgrade.
+	ver := f.storeVer[bundle]
+	if ver == "" {
+		ver = "1.0"
+	}
 	info := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>CFBundleIdentifier</key><string>%s</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
+<key>CFBundleShortVersionString</key><string>%s</string>
 <key>CFBundleDisplayName</key><string>%s</string>
-</dict></plist>`, bundle, name)
+</dict></plist>`, bundle, ver, name)
 	meta := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>itemId</key><integer>%d</integer>
 <key>itemName</key><string>%s</string>
 <key>artistName</key><string>springback fake</string>
-<key>bundleShortVersionString</key><string>1.0</string>
-</dict></plist>`, appID, name)
+<key>bundleShortVersionString</key><string>%s</string>
+</dict></plist>`, appID, name, ver)
 
 	for path, body := range map[string]string{
 		"Payload/" + name + ".app/Info.plist": info,
@@ -421,6 +441,8 @@ func (f *Fake) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		res.Found = true
 		res.TrackID = id
 		res.TrackName = lastSegment(bundleID)
+		res.Version = f.storeVer[bundleID]
+		res.Version = f.storeVer[bundleID]
 	}
 	return res
 }
