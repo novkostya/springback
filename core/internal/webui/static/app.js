@@ -310,7 +310,12 @@ function appRow(a, device) {
 
 function showAppDetail(ctx) {
   detail = ctx;
-  show("app");
+  // A URL that describes what is on screen, so the entry the swipe goes back FROM is also one
+  // a reload or a shared link can land on.
+  const path = ctx.item
+    ? `/library/${ctx.item.id}`
+    : `/device/${encodeURIComponent(ctx.device.udid)}/${encodeURIComponent(ctx.app.bundle_id)}`;
+  show("app", { path });
 }
 
 function renderAppDetail() {
@@ -663,7 +668,16 @@ function rerenderCurrent() {
   if (current === "app") renderAppDetail();
 }
 
-function show(screen) {
+// EVERY VIEW CHANGE IS A HISTORY ENTRY, which is what makes the iOS edge-swipe work.
+//
+// A single page that swaps views with JavaScript has one history entry, so a back swipe leaves
+// the app entirely — there is nothing behind it to go back to. Pushing an entry per view gives
+// the gesture, the browser's own back button and the header arrow all the same meaning, and
+// costs a URL that describes what is on screen, which a reload or a shared link can then land on.
+//
+// `push` is false when the navigation IS a back/forward event: re-pushing there would fight the
+// user, appending an entry each time they tried to leave.
+function show(screen, { path, push = true } = {}) {
   current = screen;
   for (const b of document.querySelectorAll("nav button")) {
     // The detail view belongs to whichever list you came from, so no tab owns it.
@@ -674,6 +688,18 @@ function show(screen) {
   }
   $("#back").hidden = screen !== "app";
   window.scrollTo(0, 0);
+
+  if (push) {
+    const url = path || (screen === "devices" ? "/" : `/${screen}`);
+    const state = { screen, detail: detail && (detail.item
+      ? { item: detail.item.id }
+      : { udid: detail.device.udid, bundle: detail.app.bundle_id }) };
+    // replaceState when the target is where we already are, so tapping the current tab does
+    // not stack identical entries the user then has to swipe through one by one.
+    if (location.pathname === url) history.replaceState(state, "", url);
+    else history.pushState(state, "", url);
+  }
+
   // The accounts LIST is refreshed on arrival; the form is static markup and is never touched.
   if (screen === "accounts") {
     refreshAccounts().then(renderAccountsList);
@@ -681,6 +707,49 @@ function show(screen) {
   }
   rerenderCurrent();
 }
+
+// applyRoute restores a view from a history entry — on a back/forward, or on a cold load of a
+// deep link. The state object is preferred when present; the path is the fallback, because a
+// reload arrives with no state at all.
+async function applyRoute(state) {
+  const path = location.pathname;
+
+  if (state && state.screen && state.screen !== "app") {
+    show(state.screen, { push: false });
+    return;
+  }
+
+  const lib = path.match(/^\/library\/(\d+)$/);
+  if (lib) {
+    const item = library.find((i) => String(i.id) === lib[1]);
+    if (item) { detail = { item }; show("app", { push: false }); return; }
+    show("library", { push: false });
+    return;
+  }
+
+  const dev = path.match(/^\/device\/([^/]+)\/([^/]+)$/);
+  if (dev) {
+    const udid = decodeURIComponent(dev[1]);
+    const bundle = decodeURIComponent(dev[2]);
+    const device = devices.find((d) => d.udid === udid);
+    // The device's app list may not be loaded — a reload lands here with nothing cached, and
+    // that scan is slow, so fall back to the device list rather than making the user wait
+    // on a view they only arrived at by going backwards.
+    const payload = appsCache.get(udid);
+    const app = payload && payload.apps.find((a) => a.bundle_id === bundle);
+    if (device && app) { detail = { app, device }; show("app", { push: false }); return; }
+    show("devices", { push: false });
+    return;
+  }
+
+  if (path === "/library" || path === "/accounts") {
+    show(path.slice(1), { push: false });
+    return;
+  }
+  show("devices", { push: false });
+}
+
+window.addEventListener("popstate", (ev) => { applyRoute(ev.state); });
 
 // ---------------------------------------------------------------------------
 // Accounts — list rendering only. The form lives in index.html and is wired once, below.
@@ -796,7 +865,10 @@ $("#signin").addEventListener("submit", async (ev) => {
   }
 });
 
-$("#back").onclick = () => show(detail && detail.item && !detail.app ? "library" : "devices");
+// The header arrow is the SAME action as the swipe and the browser's back button, rather than a
+// third thing that happens to look similar. Anything else and going "back" twice by two
+// different means lands somewhere neither of them promised.
+$("#back").onclick = () => history.back();
 
 for (const b of document.querySelectorAll("nav button")) {
   b.onclick = () => show(b.dataset.screen);
@@ -832,6 +904,8 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
   try { await refreshDevices(); } catch (e) {
     $("#screen-devices").replaceChildren(el("div", { className: "error", textContent: e.message }));
   }
-  show("devices");
+  // Restore whatever the URL names rather than always starting at Devices, so a reload — or a
+  // link someone kept — lands where it says it will.
+  await applyRoute(history.state);
   pollJobs();
 })();
