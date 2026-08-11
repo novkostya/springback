@@ -18,6 +18,17 @@
 
 * { box-sizing: border-box; }
 
+/* NOTHING MAY SCROLL THE PAGE SIDEWAYS. One element wider than the viewport drags the whole
+   layout right and cuts the left edge off every line — the title, the labels, the start of every
+   sentence — which is what a table of six columns did on a phone. The tables are gone, but this
+   is the guard that keeps the next wide thing from doing it again: a horizontal scrollbar on the
+   document is never what this UI wants, so it is disallowed at the root rather than avoided by
+   discipline in each component. */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -25,6 +36,10 @@ body {
   font: 15px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   -webkit-text-size-adjust: 100%;
 }
+
+/* Bundle ids and email addresses have no spaces to break at, so they must be allowed to break
+   anywhere rather than setting a minimum width the viewport cannot meet. */
+.row-sub, .fact dd, .job-line, .job-detail { overflow-wrap: anywhere; }
 
 header {
   padding: 14px 16px 0;

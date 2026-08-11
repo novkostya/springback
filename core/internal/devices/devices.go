@@ -148,6 +148,27 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 		inLibrary = map[string]int64{}
 	}
 
+	// DID THIS DEVICE GIVE US RECEIPTS AT ALL? The question decides what "no receipt" means
+	// for a single app, and the two readings are opposite:
+	//
+	//   - Receipts came back for other apps, so this device does report them. An app without
+	//     one was never bought from the App Store — sideloaded, developer-signed — and
+	//     "not in any store" is the expected answer, not a finding.
+	//   - No app on this device has one, so the receipt path did not work here at all (the
+	//     CSV fallback, an older iOS). Then a missing receipt says nothing about any
+	//     individual app, and judging by storefront alone is the best available answer.
+	//
+	// Without this distinction the first reading is unavailable and a sideloaded build gets a
+	// confident DELISTED — caught on the fake's own fixtures, where "Sideloaded Thing" was
+	// being reported as an app the App Store had pulled.
+	haveReceipts := false
+	for _, ia := range installed {
+		if ia.AppID != 0 {
+			haveReceipts = true
+			break
+		}
+	}
+
 	apps := make([]App, len(installed))
 	var wg sync.WaitGroup
 	for i, ia := range installed {
@@ -166,7 +187,9 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 			// asking every storefront about it would produce a confident DELISTED for
 			// an app that was never on sale. Answer the question that was actually
 			// asked instead of the one the lookup can answer.
-			if ia.NotPublic {
+			// Never a public listing, either because the receipt says so (B2B, factory)
+			// or because there is no receipt on a device that supplies them.
+			if ia.NotPublic || (haveReceipts && ia.AppID == 0) {
 				a.Status = storefront.NotListed
 				apps[i] = a
 				return
