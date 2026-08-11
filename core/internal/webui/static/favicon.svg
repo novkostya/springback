@@ -1,0 +1,17 @@
+<!--
+  springback's mark: an "s" drawn as a leaf spring.
+
+  Deliberately quince's sibling rather than its own thing — same #e8eaed on the same #0b0d10
+  tile, because the two run on one host and are read on one phone, and a stranger to the pair
+  should be able to see they belong together.
+
+  The letterform is the whole idea: flat terminals and squared transitions make the S read as a
+  spring under load, which is what the name means and what the tool does — the app you owned
+  comes back. A drawn mark rather than a font glyph, so it does not shift with whatever
+  system-ui resolves to on the device rendering it.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="springback">
+  <rect width="64" height="64" rx="14" fill="#0b0d10"/>
+  <path d="M43 19H29a6.5 6.5 0 0 0 0 13h6a6.5 6.5 0 0 1 0 13H21"
+        fill="none" stroke="#e8eaed" stroke-width="6.5" stroke-linecap="round"/>
+</svg>

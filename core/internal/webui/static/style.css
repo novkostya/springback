@@ -65,6 +65,15 @@ header {
    adjustment not yet recomputed — so it is drawn at its static position, hundreds of pixels
    above the viewport, and simply is not there. Sticky and forced layer promotion do not mix. */
 .titlebar { display: flex; align-items: center; gap: 10px; }
+
+/* SMALLER THAN THE TEXT BLOCK IT SITS BESIDE, on purpose. The header is `position: fixed` and
+   the content below it is offset by a hardcoded --header-h; a logo tall enough to set the
+   titlebar's height would push everything out of register with that number. At 30px it is
+   shorter than the title-plus-tagline stack, so the header measures exactly what it did before.
+
+   #e8eaed is quince's logo colour, not this app's --ink. Deliberate: the mark is the one place
+   the two tools are meant to look like the same family. */
+.logo { width: 34px; height: 34px; flex-shrink: 0; color: #e8eaed; }
 h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 .tagline { margin: 1px 0 10px; color: var(--dim); font-size: 12px; }
 

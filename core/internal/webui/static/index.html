@@ -4,11 +4,27 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>springback</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<!-- iOS ignores an SVG icon when a page is added to the home screen, and falls back to a
+     screenshot of the page. A PNG is the only way to get the mark onto the home screen. -->
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
   <div class="titlebar">
+    <!--
+      The mark WITHOUT its tile here. On the favicon it needs a dark square to sit on, but the
+      header already has one — and #0b0d10 on this page's warmer #12100e would read as a slightly
+      wrong-coloured patch rather than a logo.
+
+      Inline rather than an <img> so it paints with the first HTML rather than after a second
+      request, which matters on the one screen that is always the first thing rendered.
+    -->
+    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+      <path d="M43 19H29a6.5 6.5 0 0 0 0 13h6a6.5 6.5 0 0 1 0 13H21"
+            fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round"/>
+    </svg>
     <div>
       <h1>springback</h1>
       <p class="tagline">Keep the apps you own, after Apple stops offering them.</p>
