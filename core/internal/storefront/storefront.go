@@ -30,6 +30,19 @@ const (
 	// Available — at least one storefront still sells it.
 	Available Status = "available"
 	// Delisted — every storefront that ANSWERED said no, and enough of them answered.
+	//
+	// WHAT THIS ACTUALLY MEANS, precisely: no App Store listing was found for that bundle id
+	// in any queried storefront. The usual cause is the one springback exists for — the app
+	// was pulled. But an app that was NEVER a store listing under that bundle id (a TestFlight
+	// build, an enterprise or developer-signed app) is indistinguishable from a pulled one,
+	// and the device cannot settle it: measured on a live iPhone 2026-08-11, every installed
+	// app reports the same SignerIdentity ("Apple iPhone OS Application Signing") and
+	// ApplicationType ("User") whatever its origin, and installation_proxy exposes no
+	// store-provenance attribute at all.
+	//
+	// So the verdict is reported, and the UI says what it rests on rather than overclaiming.
+	// Archiving is the user's call either way, and for a never-listed app it simply fails at
+	// download with "app not found" — a cheap, self-correcting wrong guess.
 	Delisted Status = "delisted"
 	// Unknown — not enough storefronts answered to say either way. This is a real answer,
 	// not a placeholder: a network blip must degrade to "unknown", never to "delisted",

@@ -125,6 +125,31 @@ func (l *Library) PrepareDir(id int64) (string, error) {
 	return l.IPAPath(id), nil
 }
 
+// DiscardIfEmpty removes /library/<id> when a download left nothing behind.
+//
+// PrepareDir creates the directory BEFORE ipatool runs, so a download that fails — wrong numeric
+// id, licence not held by that account, no session — leaves an empty directory named after an id
+// that is not in the library. List() skips it for want of a meta.json, so nothing is
+// misreported, but they accumulate silently and make the library root a list of every failed
+// attempt. Observed on the staging stand after a deliberately unauthenticated download.
+//
+// Only ever removes an EMPTY directory: a partial .ipa is evidence about a download worth
+// keeping, and a directory with a meta.json is a real library entry that Delete owns.
+func (l *Library) DiscardIfEmpty(id int64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+
+	dir := l.dir(id)
+	if id <= 0 || !isUnder(l.Root, dir) {
+		return
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) > 0 {
+		return
+	}
+	_ = os.Remove(dir)
+}
+
 // Record writes meta.json by READING THE DOWNLOADED ARCHIVE, per SPEC §4: the bundle id, name
 // and version come from the .ipa's own plists, never from what the user typed. For a delisted
 // app the numeric id is hand-entered, and this is the step that catches a typo in it — the

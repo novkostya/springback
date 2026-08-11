@@ -77,6 +77,17 @@ Two further guards, because a wrong "DELISTED" costs the user half an hour and 5
 - Fewer than two storefronts answering yields **unknown**, never delisted. A network blip must
   not be able to accuse an app.
 
+What the verdict does **not** distinguish: an app that was pulled from the store, and an app that
+never had a store listing under that bundle id — a TestFlight beta, an enterprise or
+developer-signed build. Both are installed and in no storefront. The device cannot settle it
+either: measured on a live iPhone, every installed app reports the same `SignerIdentity` and
+`ApplicationType` whatever its origin, and `installation_proxy` exposes no store-provenance
+attribute. The screen says so rather than overclaiming, and a wrong guess is cheap — archiving a
+never-listed app just fails at download with `app not found`.
+
+On a real 162-app iPhone this returns 11 delisted in ~23 s cold, 0 unknown; the answers are then
+cached.
+
 ---
 
 ## Running it

@@ -171,9 +171,12 @@ function renderApps(d, payload, body, head) {
     );
   }
   const sub = el("span", { className: "sub" });
+  // What the verdict rests on, in the same breath as the verdict. "DELISTED" is a claim about
+  // the world that the user is about to spend time and ~500 MB on.
   sub.textContent =
     `Checked ${storefronts.join(", ")}. An app counts as delisted only when every one of them ` +
-    `comes back empty — an app that is simply not sold in your country is still fine.` +
+    `comes back empty — an app that is simply not sold in your country is still fine. ` +
+    `A TestFlight or in-house build has no store listing either, and looks the same from here.` +
     (unknown ? ` ${unknown} could not be checked.` : "");
   summary.append(sub);
 

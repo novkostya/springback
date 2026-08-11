@@ -192,6 +192,9 @@ func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
 	// Held open for ~30 s or more (SPEC §5 allows it for v0.1; the UI says so).
 	res, err := s.Tools.Download(r.Context(), acc.Home(s.Accounts.Root), acc.KeychainPP, req.AppID, out)
 	if err != nil {
+		// PrepareDir made the directory before ipatool ran; a failed download must not leave
+		// it behind as a permanent monument to a typo'd id.
+		s.Library.DiscardIfEmpty(req.AppID)
 		s.fail(w, err)
 		return
 	}
