@@ -89,6 +89,37 @@ main { padding: 16px; max-width: 760px; margin: 0 auto; }
 .banner { margin: 10px 16px 0; padding: 10px 12px; border-radius: var(--radius); font-size: 13px; }
 .banner.warn { background: #3a2c14; border: 1px solid #6b4f1d; }
 
+/* --- the gate ------------------------------------------------------------ */
+
+/* WHILE GATED, THE APP IS NOT MERELY COVERED — it is display:none. An overlay alone would leave
+   the header fixed to the viewport on top of the login card, and would keep a screenful of
+   device names on screen behind a semi-transparent panel after a session expired. */
+body.gated > header,
+body.gated > main,
+body.gated > #jobs,
+body.gated > #fake-banner,
+body.gated > #insecure-banner { display: none; }
+
+#gate {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: var(--bg);
+}
+.gate-card { width: 100%; max-width: 360px; }
+.gate-card h1 { margin: 0; font-size: 22px; }
+.gate-card .tagline { margin: 2px 0 14px; }
+.gate-card .banner { margin: 0 0 14px; }
+.gate-card .hint { margin: 0 0 14px; }
+
+/* A readonly field must not look like one you are expected to fill in — but it also must not
+   look broken. Dimmed, no caret, and it still hands the password manager the anchor it wants. */
+#gate-user { color: var(--dim); cursor: default; }
+
 /* --- jobs strip ---------------------------------------------------------- */
 
 /* AN EMPTY JOBS STRIP IS NOT A BOX. It used to be a sticky, positioned, zero-height element

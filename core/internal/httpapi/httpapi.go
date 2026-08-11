@@ -1,9 +1,13 @@
-// Package httpapi serves SPEC §5 and the embedded UI.
+// Package httpapi serves the API and the embedded UI.
 //
-// THERE IS NO AUTH HERE, and that is a decision rather than an omission (SPEC §1 puts it
-// explicitly out of v0.1). Keep it LAN-only: a session cookie in /accounts/ is enough to
-// download as that Apple ID, so anyone who can reach this port can act as every Apple ID signed
-// in to it. The README says so in the same words.
+// EVERYTHING UNDER /api NEEDS A SESSION, bar the health check and the auth endpoints themselves.
+// That is a change from v0.1, which had no auth at all and a README saying to keep it LAN-only —
+// an honest answer for a tool one person runs on their own box, and not one for a tool that gets
+// handed to a friend. What is behind the door has not changed: a signed-in Apple ID here can
+// download as that Apple ID, so reaching this port is still equivalent to holding the accounts.
+//
+// The UI itself is served WITHOUT a session, because it has to load in order to draw the login
+// form. It is markup with no secrets in it; every byte of content comes from /api.
 package httpapi
 
 import (
@@ -20,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/novkostya/springback/core/internal/auth"
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/jobs"
 	"github.com/novkostya/springback/core/internal/store"
@@ -31,7 +36,10 @@ import (
 
 // Server wires the packages together.
 type Server struct {
-	Tools   tools.Tools
+	Tools tools.Tools
+	// Auth is the password gate. Everything under /api except health and the auth endpoints
+	// themselves requires a session.
+	Auth    *auth.Service
 	Devices *devices.Service
 	Library *store.Library
 	// DeviceIcons is the cache of icons read off the devices themselves — the only source
@@ -52,6 +60,11 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
+
+	mux.HandleFunc("GET /api/auth/status", s.authStatus)
+	mux.HandleFunc("POST /api/auth/setup", s.authSetup)
+	mux.HandleFunc("POST /api/auth/login", s.authLogin)
+	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 
 	mux.HandleFunc("GET /api/devices", s.listDevices)
 	mux.HandleFunc("GET /api/devices/{udid}/apps", s.deviceApps)
@@ -75,7 +88,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/lookup", s.lookup)
 
 	mux.Handle("/", webui.Handler())
-	return logging(s.Log, mux)
+	return logging(s.Log, s.guard(mux))
 }
 
 func logging(log *slog.Logger, next http.Handler) http.Handler {

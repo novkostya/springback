@@ -23,6 +23,10 @@ async function api(path, opts = {}) {
   let body = null;
   try { body = text ? JSON.parse(text) : null; } catch { /* not json */ }
   if (!res.ok) {
+    // A SESSION CAN EXPIRE UNDER A PAGE THAT IS ALREADY OPEN — after a fortnight idle, or a
+    // server restart. Every screen would otherwise fill with "HTTP 401" and the user would
+    // have no way to act on it. Put the gate back instead, from wherever they were.
+    if (res.status === 401 && !path.startsWith("/api/auth/")) showGate("needs_login");
     const err = new Error((body && (body.detail || body.error)) || `HTTP ${res.status}`);
     err.kind = body && body.error;
     err.status = res.status;
@@ -31,6 +35,88 @@ async function api(path, opts = {}) {
   }
   return body;
 }
+
+// ---------------------------------------------------------------------------
+// The gate
+//
+// springback holds live Apple ID sessions, so the door matters more than the size of the app
+// behind it suggests. Two states share one form: setting the first password, and signing in.
+// ---------------------------------------------------------------------------
+
+let booted = false;
+
+function showGate(state) {
+  const setup = state === "needs_setup";
+  document.body.classList.add("gated");
+  $("#gate").hidden = false;
+  $("#gate-intro").textContent = setup
+    ? "Choose a password. It is the only thing standing between this box and every Apple ID signed in to it, so make it a real one."
+    : "";
+  $("#gate-confirm-wrap").hidden = !setup;
+  $("#gate-submit").textContent = setup ? "Set password" : "Sign in";
+  // The password manager needs to know which of the two this is, or it offers to fill a
+  // password on the screen that is creating one.
+  $("#gate-pass").setAttribute("autocomplete", setup ? "new-password" : "current-password");
+  $("#gate-form").dataset.mode = setup ? "setup" : "login";
+}
+
+function hideGate() {
+  $("#gate").hidden = true;
+  document.body.classList.remove("gated");
+  // Never leave the password sitting in a field behind a page the user is still looking at.
+  $("#gate-pass").value = "";
+  $("#gate-pass2").value = "";
+}
+
+// applyTransport drives both insecure banners from one answer.
+function applyTransport(status) {
+  // Loopback is a secure context as far as the browser is concerned, and warning about
+  // http://localhost would put a red box on the most common way to try springback out.
+  const warn = !status.secure && !status.loopback;
+  $("#gate-insecure").hidden = !warn;
+  $("#insecure-banner").hidden = !warn;
+}
+
+async function authStatus() {
+  const res = await fetch("/api/auth/status");
+  return res.json();
+}
+
+$("#gate-form").onsubmit = async (ev) => {
+  ev.preventDefault();
+  const setup = $("#gate-form").dataset.mode === "setup";
+  const pass = $("#gate-pass").value;
+  const btn = $("#gate-submit");
+
+  if (setup && pass !== $("#gate-pass2").value) {
+    toast("The two passwords do not match.", true);
+    return;
+  }
+  if (btn.disabled) return;
+  btn.disabled = true;
+  const label = btn.textContent;
+  btn.textContent = "…";
+  try {
+    await api(setup ? "/api/auth/setup" : "/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ password: pass }),
+    });
+    hideGate();
+    await boot();
+  } catch (e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = label;
+  }
+};
+
+$("#sign-out").onclick = async () => {
+  try { await api("/api/auth/logout", { method: "POST" }); } catch { /* going anyway */ }
+  // A full reload rather than showing the gate in place: it drops every scrap of device,
+  // library and account data already rendered, which is the point of signing out.
+  location.href = "/";
+};
 
 let toastTimer;
 function toast(msg, bad = false) {
@@ -1229,7 +1315,12 @@ async function pollDevices() {
 setInterval(pollDevices, DEVICE_POLL_MS);
 document.addEventListener("visibilitychange", () => { if (!document.hidden) pollDevices(); });
 
-(async () => {
+// boot runs once, AFTER the gate is satisfied. Everything it does needs a session, so running it
+// first would just be a screenful of 401s.
+async function boot() {
+  if (booted) return;
+  booted = true;
+
   try {
     const health = await api("/api/health");
     $("#fake-banner").hidden = !health.fake;
@@ -1246,6 +1337,24 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
   // link someone kept — lands where it says it will.
   await renderRoute(new URL(location.href));
   pollJobs();
+}
+
+(async () => {
+  let status;
+  try {
+    status = await authStatus();
+  } catch {
+    // The server is unreachable. Show the login form rather than a blank page: it is the one
+    // screen that explains itself, and the next attempt will say what is wrong.
+    status = { state: "needs_login", secure: true, loopback: false };
+  }
+  applyTransport(status);
+  if (status.state === "authenticated") {
+    hideGate();
+    await boot();
+  } else {
+    showGate(status.state);
+  }
 })();
 
 // The header is FIXED, not sticky — see style.css for why — so the content has to reclaim its

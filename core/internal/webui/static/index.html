@@ -10,7 +10,46 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <link rel="stylesheet" href="/style.css">
 </head>
-<body>
+<body class="gated">
+<!--
+  THE GATE IS STATIC MARKUP AND IS NEVER REBUILT BY JAVASCRIPT, for the reason the Apple ID form
+  learned the hard way: Safari's password manager will not reliably fill a form that script
+  assembled after load, and re-rendering one mid-typing wipes what is in it.
+
+  THE USERNAME FIELD IS READONLY AND IT IS NOT DECORATION. springback has exactly one user, so
+  the field carries no information — but a password manager needs something to key an entry on,
+  and offered a lone password input it commonly declines to save anything at all. One readonly
+  field costs nothing and makes this behave like a normal login.
+-->
+<div id="gate">
+  <div class="gate-card">
+    <h1>springback</h1>
+    <p class="tagline">Keep the apps you own, after Apple stops offering them.</p>
+    <p id="gate-intro" class="hint"></p>
+
+    <div id="gate-insecure" class="banner warn" hidden>
+      <strong>This connection is not encrypted.</strong>
+      Your password, and every Apple ID session behind it, cross the network in the clear. That
+      may be fine on a home network you trust; put springback behind a reverse proxy with TLS
+      for anything else.
+    </div>
+
+    <form id="gate-form" class="stack">
+      <label for="gate-user">Username
+        <input type="text" id="gate-user" name="username" value="springback" readonly
+               autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false">
+      </label>
+      <label for="gate-pass">Password
+        <input type="password" id="gate-pass" name="password" autocomplete="current-password" required>
+      </label>
+      <label for="gate-pass2" id="gate-confirm-wrap" hidden>Repeat password
+        <input type="password" id="gate-pass2" name="confirm-password" autocomplete="new-password">
+      </label>
+      <button class="primary wide" type="submit" id="gate-submit">Sign in</button>
+    </form>
+  </div>
+</div>
+
 <header>
   <!-- NO LOGO IN HERE. The mark lives on the favicon and the home-screen icon, where it does a
        job; in the header it was decoration next to a wordmark that already says the same thing. -->
@@ -30,6 +69,14 @@
 <div id="fake-banner" class="banner warn" hidden>
   <strong>Fake tool layer.</strong> Nothing here is talking to a real device, Apple ID or App
   Store — these are fixtures for developing on a box with no hardware.
+</div>
+
+<!-- Shown for as long as the connection stays plain http on a non-loopback address. A warning
+     that appears once at the login screen and never again is a warning about the password only;
+     what is actually crossing in the clear is every request after it. -->
+<div id="insecure-banner" class="banner warn" hidden>
+  <strong>Not encrypted.</strong> This page is served over plain http, so everything on it
+  crosses the network in the clear. Put springback behind a reverse proxy with TLS.
 </div>
 
 <div id="jobs"></div>
@@ -117,6 +164,13 @@
       This signs in to Apple's Store API with an unofficial client, which is against Apple's
       terms; accounts have been flagged for it. The risk is yours and stays on this box.
     </p>
+
+    <!-- Signing out of springback, which is a different thing from removing an Apple ID above.
+         Down here rather than in the header: it is used once in a blue moon, and a destructive-
+         looking control in the nav bar of a phone app gets hit by accident. -->
+    <h3 class="sub-head">This springback</h3>
+    <p class="hint">Signed in as <strong>springback</strong>.</p>
+    <button id="sign-out" class="wide" type="button">Sign out</button>
   </section>
   <section id="screen-app" hidden></section>
 </main>

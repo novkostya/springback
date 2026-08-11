@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/novkostya/springback/core/internal/auth"
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/httpapi"
 	"github.com/novkostya/springback/core/internal/jobs"
@@ -84,6 +85,12 @@ func main() {
 		}
 	}
 
+	authSvc, err := auth.New(*accountsDir)
+	if err != nil {
+		log.Error("cannot read the password file", "err", err)
+		os.Exit(1)
+	}
+
 	library := store.NewLibrary(*libraryDir)
 	accounts := store.NewAccounts(*accountsDir)
 	// Under the library root because that is the volume with room on it, and in a dot-directory
@@ -95,6 +102,7 @@ func main() {
 
 	srv := &httpapi.Server{
 		Tools:       t,
+		Auth:        authSvc,
 		Devices:     &devices.Service{Tools: t, Resolver: resolver, Library: library},
 		Library:     library,
 		DeviceIcons: deviceIcons,
