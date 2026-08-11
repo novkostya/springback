@@ -14,6 +14,8 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/jobs"
@@ -47,6 +49,7 @@ func (s *Server) Handler() http.Handler {
 
 	mux.HandleFunc("GET /api/devices", s.listDevices)
 	mux.HandleFunc("GET /api/devices/{udid}/apps", s.deviceApps)
+	mux.HandleFunc("GET /api/devices/{udid}/installed", s.deviceInstalled)
 	mux.HandleFunc("POST /api/devices/{udid}/install", s.install)
 
 	mux.HandleFunc("GET /api/library", s.listLibrary)
@@ -124,6 +127,29 @@ func (s *Server) deviceApps(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, res)
 }
 
+// deviceInstalled lists just what is installed, with no store lookups at all.
+//
+// SEPARATE FROM /apps ON PURPOSE. That endpoint asks Apple about every one of 162 bundle ids and
+// takes ~25 s cold; this one runs a single `ideviceinstaller list` and answers in under a second.
+// The app detail screen needs only "is this app already on that device?" for each device, and
+// making it pay for the at-risk scan of every device would be absurd.
+func (s *Server) deviceInstalled(w http.ResponseWriter, r *http.Request) {
+	apps, err := s.Tools.ListApps(r.Context(), r.PathValue("udid"))
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(apps))
+	for _, a := range apps {
+		out = append(out, map[string]any{
+			"bundle_id": a.BundleID,
+			"version":   a.Version,
+			"app_id":    a.AppID,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 type installReq struct {
 	LibraryID int64 `json:"library_id"`
 }
@@ -150,7 +176,8 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	job := s.Jobs.Start(jobs.Install, item.Name, target, func(ctx context.Context, h *jobs.Handle) (any, error) {
+	key := "install:" + strconv.FormatInt(item.ID, 10) + ":" + udid
+	job := s.Jobs.Start(jobs.Install, key, item.Name, target, func(ctx context.Context, h *jobs.Handle) (any, error) {
 		err := s.Tools.InstallApp(ctx, udid, s.Library.IPAPath(item.ID), func(p tools.InstallProgress) {
 			h.Progress(p.Percent, p.Stage, "")
 		})
@@ -236,9 +263,43 @@ func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
 	// A JOB, NOT A HELD-OPEN REQUEST. ~500 MB at 35 MB/s is tens of seconds on a good link
 	// and minutes on a bad one, and the old shape gave the user a spinner and no number for
 	// all of it.
-	job := s.Jobs.Start(jobs.Download, label, "", func(ctx context.Context, h *jobs.Handle) (any, error) {
+	key := "download:" + strconv.FormatInt(req.AppID, 10)
+	job := s.Jobs.Start(jobs.Download, key, label, "", func(ctx context.Context, h *jobs.Handle) (any, error) {
+		// THE LONG PAUSE AT 99% IS REAL WORK, and saying so is the whole fix. Once the
+		// bytes are down ipatool decrypts the package and repacks it, which takes tens of
+		// seconds on a 200 MB app and reports nothing at all — so the bar sits at 99% and
+		// looks hung. Reported from real use. The stall is detected and named rather than
+		// hidden behind a fake-moving bar.
+		var lastFrame atomic.Int64
+		lastFrame.Store(time.Now().UnixMilli())
+		var peak atomic.Int64
+
+		stop := make(chan struct{})
+		defer close(stop)
+		go func() {
+			t := time.NewTicker(2 * time.Second)
+			defer t.Stop()
+			for {
+				select {
+				case <-stop:
+					return
+				case <-t.C:
+					quiet := time.Since(time.UnixMilli(lastFrame.Load()))
+					if quiet > 4*time.Second && peak.Load() >= 95 {
+						h.Progress(-1, "decrypting and repacking — no progress is reported for this part", "")
+					}
+				}
+			}
+		}()
+
 		res, err := s.Tools.Download(ctx, acc.Home(s.Accounts.Root), acc.KeychainPP, req.AppID, out,
-			func(p tools.DownloadProgress) { h.Progress(p.Percent, "downloading", p.Detail) })
+			func(p tools.DownloadProgress) {
+				lastFrame.Store(time.Now().UnixMilli())
+				if int64(p.Percent) > peak.Load() {
+					peak.Store(int64(p.Percent))
+				}
+				h.Progress(p.Percent, "downloading", p.Detail)
+			})
 		if err != nil {
 			// PrepareDir made the directory before ipatool ran; a failed download
 			// must not leave it behind as a monument to a typo'd id.

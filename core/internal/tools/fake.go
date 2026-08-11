@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"github.com/novkostya/springback/core/internal/ipa"
 	"strings"
 	"sync"
 	"time"
@@ -206,12 +208,39 @@ func (f *Fake) InstallApp(ctx context.Context, udid, ipaPath string, onProgress 
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case <-time.After(150 * time.Millisecond):
+		case <-time.After(400 * time.Millisecond):
 		}
 		if onProgress != nil {
 			onProgress(p)
 		}
 	}
+
+	// THE APP IS NOW ON THE DEVICE, and the fake has to say so. Without this the fake's
+	// install was a no-op that reported success, so the UI state it produces — a device row
+	// that should stop offering "Install" and start saying "installed" — could not be
+	// exercised here at all, and the gap showed up as a row that never changed.
+	//
+	// The bundle id is read from the .ipa the fake itself wrote, rather than passed in, which
+	// is what the real device does too: the package is the source of truth about what it is.
+	meta, err := ipa.Read(ipaPath)
+	if err != nil {
+		return err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, existing := range f.apps[udid] {
+		if existing.BundleID == meta.BundleID {
+			return nil
+		}
+	}
+	f.apps[udid] = append(f.apps[udid], InstalledApp{
+		BundleID:  meta.BundleID,
+		Version:   meta.Version,
+		Name:      meta.Name,
+		AppID:     meta.ItemID,
+		StoreName: meta.Name,
+		Artist:    meta.Artist,
+	})
 	return nil
 }
 

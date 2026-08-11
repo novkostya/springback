@@ -79,33 +79,43 @@ let detail = null; // { app, deviceUdid } | { item }
 
 let jobTimer = null;
 let knownJobs = new Map();
+let runningJobs = [];
 
 async function pollJobs() {
   let list = [];
   try { list = await api("/api/jobs"); } catch { return; }
 
+  runningJobs = list.filter((j) => j.state === "running");
   const strip = $("#jobs");
-  strip.replaceChildren(...list.filter((j) => j.state === "running").map(jobRow));
+  // Downloads keep the top strip — they belong to no row. Installs are drawn IN the device
+  // row instead, so showing them twice would be the duplicate-count mistake again.
+  strip.replaceChildren(...runningJobs.filter((j) => j.kind === "download").map(jobRow));
 
+  let finished = false;
   for (const j of list) {
     const was = knownJobs.get(j.id);
     knownJobs.set(j.id, j.state);
     if (was === "running" && j.state !== "running") {
+      finished = true;
       if (j.state === "done") {
         toast(`${j.kind === "install" ? "Installed" : "Archived"} ${j.label}.`);
-        // The library gained an entry, and a device's app list may now say "in library".
+        // The library gained an entry, a device's app list may now say "in library",
+        // and an installed-app set is now out of date.
         appsCache.clear();
+        installedOn.clear();
         await refreshLibrary();
-        rerenderCurrent();
       } else {
         toast(`${j.label}: ${j.error}`, true);
       }
     }
   }
 
-  const anyRunning = list.some((j) => j.state === "running");
+  // Re-render while jobs are running so the in-row rings advance, and once more when one
+  // ends so the row settles into its finished state.
+  if (runningJobs.length || finished) rerenderCurrent();
+
   clearTimeout(jobTimer);
-  if (anyRunning) jobTimer = setTimeout(pollJobs, 1000);
+  if (runningJobs.length) jobTimer = setTimeout(pollJobs, 1000);
 }
 
 function jobRow(j) {
@@ -346,7 +356,7 @@ function renderAppDetail() {
         (() => {
           const b = el("button", { className: "primary wide", textContent: "Archive to library" });
           b.disabled = !accounts.length;
-          b.onclick = () => archive(appID, pickedAccount(match && match.slug), title);
+          b.onclick = () => archive(appID, pickedAccount(match && match.slug), title, b);
           return b;
         })(),
       ]));
@@ -364,7 +374,7 @@ function renderAppDetail() {
           b.onclick = () => {
             const id = parseInt($("#manual-appid").value, 10);
             if (!id) { toast("A numeric App Store id is required.", true); return; }
-            archive(id, pickedAccount(null), title);
+            archive(id, pickedAccount(null), title, b);
           };
           return b;
         })(),
@@ -379,6 +389,9 @@ function renderAppDetail() {
       blocks.push(el("p", { className: "hint", textContent: "No paired devices." }));
     }
     blocks.push(el("div", { className: "list" }, devices.map((d) => installRow(d, item))));
+    // Ask each reachable device what it already has, so a device that has this app says so
+    // instead of offering to install it again. One cheap call per device, no store lookups.
+    loadInstalledSets();
     blocks.push(el("p", { className: "note", textContent:
       "A different Apple ID on the device is fine. iOS asks for the Apple ID that owns the app the first time it is opened, not now — and it works from then on." }));
 
@@ -399,30 +412,107 @@ function renderAppDetail() {
   root.replaceChildren(...blocks);
 }
 
+// installRow is a device with ONE affordance and one state, and every state is distinguishable
+// without reading: already installed, installing (with a ring showing how far), asleep, or a
+// button that plainly says Install.
 function installRow(d, item) {
-  const r = el("button", { className: "row" }, [
+  const job = jobFor(`install:${item.id}:${d.udid}`);
+  const already = installedOn.get(d.udid);
+  const has = already && already.has(item.bundle_id);
+
+  let right;
+  if (job) {
+    // The progress lives IN THE ROW, next to the device it belongs to — a strip at the top
+    // of the page cannot say which of three devices is being written to.
+    right = ring(job.percent, job.stage);
+  } else if (has) {
+    right = el("span", { className: "tick done", textContent: "installed" });
+  } else if (!d.reachable) {
+    right = el("span", { className: "pill asleep", textContent: "asleep" });
+  } else {
+    right = el("span", { className: "btn-inline", textContent: "Install" });
+  }
+
+  const r = el("button", { className: "row" + (job ? " busy" : "") }, [
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: d.name || d.udid }),
-      el("div", { className: "row-sub", textContent: [d.product_type, d.ios && `iOS ${d.ios}`].filter(Boolean).join(" · ") }),
+      el("div", {
+        className: "row-sub",
+        textContent: job
+          ? (job.stage || "starting…")
+          : [d.product_type, d.ios && `iOS ${d.ios}`].filter(Boolean).join(" · "),
+      }),
     ]),
-    el("div", { className: "row-right" }, [
-      d.reachable
-        ? el("span", { className: "pill live", textContent: "install" })
-        : el("span", { className: "pill asleep", textContent: "asleep" }),
-    ]),
+    el("div", { className: "row-right" }, [right]),
   ]);
-  r.disabled = !d.reachable;
+
+  r.disabled = !d.reachable || !!job;
   r.onclick = async () => {
+    // Disable ON THE WAY IN, before the request is even sent. The reported bug was two taps
+    // queuing two downloads, and the round trip is exactly the window a second tap lands in.
+    // The server refuses duplicates too — this is the half that stops it feeling broken.
+    if (r.disabled) return;
+    r.disabled = true;
+    r.classList.add("busy");
+    r.querySelector(".row-right").replaceChildren(ring(-1, "starting…"));
     try {
-      const res = await api(`/api/devices/${encodeURIComponent(d.udid)}/install`, {
+      await api(`/api/devices/${encodeURIComponent(d.udid)}/install`, {
         method: "POST",
         body: JSON.stringify({ library_id: item.id }),
       });
-      toast(res.note);
+      // NO TOAST HERE. The response's FairPlay note is already on this screen as a
+      // permanent block, so raising it again as an overlay said the same thing twice AND
+      // covered the device row the user had just tapped — the one place the progress ring
+      // now lives. The row itself is the feedback.
       startedJob();
-    } catch (e) { toast(e.message, true); }
+    } catch (e) {
+      toast(e.message, true);
+      r.disabled = false;
+      r.classList.remove("busy");
+      rerenderCurrent();
+    }
   };
   return r;
+}
+
+// ring draws a small circular progress indicator. percent < 0 spins instead, because a ring
+// pinned at zero is indistinguishable from a stalled one.
+function ring(percent, title) {
+  const wrap = el("span", { className: "ring", title: title || "" });
+  if (percent == null || percent < 0) {
+    wrap.classList.add("spin");
+    return wrap;
+  }
+  const pct = Math.max(0, Math.min(100, percent));
+  // A conic gradient is the whole implementation — no SVG, no library.
+  wrap.style.setProperty("--pct", `${pct * 3.6}deg`);
+  wrap.append(el("span", { className: "ring-num", textContent: String(pct) }));
+  return wrap;
+}
+
+function jobFor(key) {
+  return runningJobs.find((j) => j.key === key) || null;
+}
+
+// installedOn: udid -> Set of bundle ids currently on that device.
+const installedOn = new Map();
+const installedLoading = new Set();
+
+// loadInstalledSets fills it lazily for the reachable devices, then re-renders once. Fetched
+// rather than derived from appsCache because that cache is only populated for devices the user
+// has expanded, and this screen is reachable straight from the library.
+function loadInstalledSets() {
+  for (const d of devices) {
+    if (!d.reachable || installedOn.has(d.udid) || installedLoading.has(d.udid)) continue;
+    installedLoading.add(d.udid);
+    api(`/api/devices/${encodeURIComponent(d.udid)}/installed`)
+      .then((list) => {
+        installedOn.set(d.udid, new Set(list.map((a) => a.bundle_id)));
+        if (current === "app") renderAppDetail();
+      })
+      .catch(() => { /* a device that stopped answering simply shows Install */ })
+      .finally(() => installedLoading.delete(d.udid));
+  }
 }
 
 // accountPicker defaults to the Apple ID that actually bought the app.
@@ -447,8 +537,15 @@ function pickedAccount(preferredSlug) {
   return preferredSlug || (accounts[0] && accounts[0].slug);
 }
 
-async function archive(appID, slug, label) {
+async function archive(appID, slug, label, btn) {
   if (!slug) { toast("Add an Apple ID on the Accounts screen first.", true); return; }
+  // Same double-submit guard as the install rows: disable before the request goes out, since
+  // the round trip is exactly the window a second tap lands in. The server deduplicates too.
+  if (btn) {
+    if (btn.disabled) return;
+    btn.disabled = true;
+    btn.textContent = "Starting…";
+  }
   try {
     await api("/api/library", {
       method: "POST",
@@ -456,7 +553,10 @@ async function archive(appID, slug, label) {
     });
     toast(`Downloading ${label} — progress is at the top of the screen.`);
     startedJob();
-  } catch (e) { toast(e.message, true); }
+  } catch (e) {
+    toast(e.message, true);
+    if (btn) { btn.disabled = false; btn.textContent = "Archive to library"; }
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -498,7 +598,7 @@ function renderLibrary() {
     const id = parseInt($("#lib-appid").value, 10);
     if (!id) { toast("Enter the numeric App Store id.", true); return; }
     const sel = $("#lib-account");
-    archive(id, sel && sel.value, `id ${id}`);
+    archive(id, sel && sel.value, `id ${id}`, addForm.querySelector("button"));
   };
 
   root.replaceChildren(
@@ -563,13 +663,10 @@ function renderAccounts() {
     el("label", { textContent: "Password" }, [
       el("input", { type: "password", id: "acc-pass", autocomplete: "current-password", required: true }),
     ]),
-    pendingSlug
-      ? el("label", { textContent: "Verification code" }, [
-          el("input", { type: "text", id: "acc-code", inputMode: "numeric", autocomplete: "one-time-code" }),
-        ])
-      : null,
-    el("button", { className: "primary wide", type: "submit", id: "acc-submit",
-      textContent: pendingSlug ? "Finish sign-in" : "Sign in" }),
+    // The code field is NOT rendered from state here. It is inserted in place when Apple asks
+    // for one, precisely so that this render never runs again mid-sign-in and never clears the
+    // email and password the second call still needs.
+    el("button", { className: "primary wide", type: "submit", id: "acc-submit", textContent: "Sign in" }),
   ]);
 
   form.onsubmit = async (ev) => {
@@ -595,8 +692,26 @@ function renderAccounts() {
       renderAccounts();
     } catch (e) {
       if (e.kind === "needs_2fa") {
+        // REVEAL THE CODE FIELD IN PLACE. Re-rendering the screen here rebuilt the form
+        // from scratch and wiped the email and password the user had just typed — and the
+        // password is REQUIRED for this second call, because ipatool re-runs the whole
+        // login with the code attached. So the step that asks for a code was destroying
+        // the thing it needs, and the form could not be completed at all. Reported from
+        // real use.
         pendingSlug = e.body.slug;
-        renderAccounts();
+        submit.disabled = false;
+        submit.textContent = "Finish sign-in";
+        let wrap = $("#acc-2fa-wrap");
+        if (!wrap) {
+          wrap = el("label", { id: "acc-2fa-wrap", textContent: "Verification code" }, [
+            el("input", {
+              type: "text", id: "acc-code", inputMode: "numeric",
+              autocomplete: "one-time-code", placeholder: "123456",
+            }),
+          ]);
+          form.insertBefore(wrap, submit);
+        }
+        $("#acc-code").focus();
         toast(e.body.detail);
       } else {
         toast(e.message, true);
@@ -623,10 +738,16 @@ function renderAccounts() {
 // Navigation + auto-refresh
 // ---------------------------------------------------------------------------
 
+// rerenderCurrent is what the TIMERS call — the 5s device poll and the 1s job poll.
+//
+// THE ACCOUNTS SCREEN IS DELIBERATELY EXCLUDED. It is the only screen holding text the user is
+// part-way through typing, and rebuilding it would clear the email, the password and the
+// verification code from under them — the same defect as the 2FA re-render, arriving on a timer
+// instead of a response. Nothing on that screen changes on its own, so there is nothing to
+// refresh; it is re-rendered explicitly after an action completes.
 function rerenderCurrent() {
   if (current === "devices") renderDevices();
   if (current === "library") renderLibrary();
-  if (current === "accounts") renderAccounts();
   if (current === "app") renderAppDetail();
 }
 
@@ -641,6 +762,13 @@ function show(screen) {
   }
   $("#back").hidden = screen !== "app";
   window.scrollTo(0, 0);
+  // Navigating TO accounts renders it — that is an explicit act, unlike the timers, and a
+  // half-typed form is not something to preserve across leaving the screen.
+  if (screen === "accounts") {
+    pendingSlug = null;
+    renderAccounts();
+    return;
+  }
   rerenderCurrent();
 }
 

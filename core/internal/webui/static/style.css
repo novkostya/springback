@@ -294,6 +294,11 @@ input, select {
   input, select { font-size: 13px; }
 }
 
+/* The toast floats over the page, so whatever is at the bottom is hidden while it shows. Every
+   list therefore ends with room for it — otherwise the last row of a device list, or the last
+   action on a detail screen, is unreachable for as long as a message is up. */
+main { padding-bottom: 96px; }
+
 #toast {
   position: fixed;
   left: 12px;
@@ -324,3 +329,58 @@ input, select {
   vertical-align: -1px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- affordances ---------------------------------------------------------
+
+   The install control was a `pill` reading "install" — the same shape used elsewhere for
+   PASSIVE status ("reachable", "asleep"), so it read as a label rather than a control and got
+   tapped twice. A thing you can tap must not look like a thing that merely reports. */
+
+.btn-inline {
+  background: var(--accent);
+  color: #1a1108;
+  font-weight: 600;
+  font-size: 12.5px;
+  padding: 7px 14px;
+  border-radius: 7px;
+  white-space: nowrap;
+}
+.row:hover:not(:disabled) .btn-inline { filter: brightness(1.1); }
+/* A pressed row must acknowledge the tap on the way down, not when the response lands. */
+.row:active:not(:disabled) { background: #2a2422; }
+.row:active:not(:disabled) .btn-inline { transform: scale(0.97); }
+.row.busy .row-title { color: var(--dim); }
+
+.tick.done { color: #9dbb8a; }
+
+/* A small circular progress, drawn with a conic gradient — no SVG, no library. */
+.ring {
+  --pct: 0deg;
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: conic-gradient(var(--accent) var(--pct), var(--panel-2) 0);
+  flex-shrink: 0;
+}
+.ring::before {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 50%;
+  background: var(--panel);
+}
+.ring-num {
+  position: relative;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink);
+}
+/* percent < 0: spin, because a ring pinned at zero is indistinguishable from a stalled one. */
+.ring.spin {
+  background: conic-gradient(var(--accent) 90deg, var(--panel-2) 0);
+  animation: spin 0.9s linear infinite;
+}

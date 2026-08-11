@@ -38,8 +38,12 @@ const (
 
 // Job is one unit of slow work, as the UI sees it.
 type Job struct {
-	ID    string `json:"id"`
-	Kind  Kind   `json:"kind"`
+	ID   string `json:"id"`
+	Kind Kind   `json:"kind"`
+	// Key identifies the WORK, not the request: "download:6744684419" or
+	// "install:6744684419:<udid>". Two requests with the same key are the same job.
+	// Exposed so the UI can find the job belonging to a given app or device row.
+	Key   string `json:"key,omitempty"`
 	State State  `json:"state"`
 	// Label is what to call this on screen — the app's name, not its id.
 	Label string `json:"label"`
@@ -78,13 +82,31 @@ func NewRegistry() *Registry {
 // The context is deliberately NOT the HTTP request's: the whole point is that the work outlives
 // the request that asked for it. A caller that passed r.Context() here would cancel the download
 // the moment the browser got its job id.
-func (r *Registry) Start(kind Kind, label, target string, fn func(ctx context.Context, j *Handle) (any, error)) *Job {
+//
+// DEDUPLICATED BY KEY, AND THIS IS A CORRECTNESS GUARD RATHER THAN AN OPTIMISATION. A tap on a
+// slow-looking button gets tapped again, and reported from real use: two taps queued two
+// downloads of the same app, which then raced to write the same file in the same library
+// directory. No amount of UI responsiveness removes that hazard — a double-submit can come from
+// a double-tap, a retried request, or two phones — so the refusal lives here, where it is the
+// last word. An identical key that is already running returns THAT job, so the caller's UI
+// simply attaches to the work already in flight.
+func (r *Registry) Start(kind Kind, key, label, target string, fn func(ctx context.Context, j *Handle) (any, error)) *Job {
 	r.mu.Lock()
+	if key != "" {
+		for _, j := range r.jobs {
+			if j.Key == key && j.State == Running {
+				cp := *j
+				r.mu.Unlock()
+				return &cp
+			}
+		}
+	}
 	r.seq++
 	id := kind0(kind) + "-" + itoa(r.seq)
 	job := &Job{
 		ID:        id,
 		Kind:      kind,
+		Key:       key,
 		State:     Running,
 		Label:     label,
 		Target:    target,
