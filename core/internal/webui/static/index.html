@@ -12,19 +12,9 @@
 </head>
 <body>
 <header>
+  <!-- NO LOGO IN HERE. The mark lives on the favicon and the home-screen icon, where it does a
+       job; in the header it was decoration next to a wordmark that already says the same thing. -->
   <div class="titlebar">
-    <!--
-      The mark WITHOUT its tile here. On the favicon it needs a dark square to sit on, but the
-      header already has one — and #0b0d10 on this page's warmer #12100e would read as a slightly
-      wrong-coloured patch rather than a logo.
-
-      Inline rather than an <img> so it paints with the first HTML rather than after a second
-      request, which matters on the one screen that is always the first thing rendered.
-    -->
-    <svg class="logo" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
-      <path d="M43 19H29a6.5 6.5 0 0 0 0 13h6a6.5 6.5 0 0 1 0 13H21"
-            fill="none" stroke="currentColor" stroke-width="6.5" stroke-linecap="round"/>
-    </svg>
     <div>
       <h1>springback</h1>
       <p class="tagline">Keep the apps you own, after Apple stops offering them.</p>
