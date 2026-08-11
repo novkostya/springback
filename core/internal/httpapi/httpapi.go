@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -527,15 +528,34 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		// 502: the failure is upstream, not in the request. Saying so matters, because the
 		// natural reading of a failed sign-in is "I typed something wrong" and the user will
 		// otherwise retype a correct password until Apple rate-limits them for it.
+		//
+		// The status Apple gave is included verbatim: it is the only part that varies, and
+		// it is what makes the failure reportable rather than just frustrating.
 		writeErr(w, http.StatusBadGateway, "apple_rejected",
-			"Apple refused the request — it answered with an empty response rather than a login result. "+
-				"This is Apple blocking the unofficial client, not a wrong password: it is a known, currently "+
-				"unfixed ipatool problem (issue #513) and the error changes between attempts. Wait a few minutes "+
-				"and try again; retrying immediately tends to make it worse.")
+			appleRejectedAdvice(err))
 	default:
 		s.Log.Error("request failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "error", err.Error())
 	}
+}
+
+// appleRejectedAdvice says what happened, that it is not the user's fault, and what to actually
+// do — including the one thing that still works, since "everything is broken" is both wrong and
+// unhelpful when only new sign-ins are affected.
+func appleRejectedAdvice(err error) string {
+	status := ""
+	if s := err.Error(); strings.Contains(s, "HTTP ") {
+		status = " (" + s[strings.LastIndex(s, "HTTP "):] + ")"
+	}
+	return "Apple refused the sign-in" + status + " — it answered with an error instead of a login result. " +
+		"This is NOT a wrong password, and not something springback can retry its way out of: Apple is " +
+		"currently rejecting the unofficial Store client, and the status it returns changes between " +
+		"attempts (204, 403, 503 …). Verified here by running the same tool directly, with springback out " +
+		"of the picture, against an address that does not exist — same failure. It is upstream ipatool " +
+		"issue #513, which is open with no fix available. " +
+		"What to do: leave it for a while rather than retrying, since repeated attempts risk a rate-limit " +
+		"on top of the outage. Apple IDs already signed in keep working — their sessions are stored, so " +
+		"browsing devices, downloading and installing are all unaffected."
 }
 
 func decode(w http.ResponseWriter, r *http.Request, v any) bool {

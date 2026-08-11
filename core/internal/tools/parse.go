@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/csv"
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -176,7 +177,16 @@ func classify(out string, fallback error) error {
 	// Checked LAST among the auth cases, so a genuine "license not found" or a 2FA prompt is
 	// never swallowed by it: those are specific, this is the catch-all for Apple answering
 	// with something the client cannot parse at all.
-	case containsAny(l, "unexpected response from apple", "empty or non-plist body"):
+	//
+	// The STATUS CODE IS CARRIED THROUGH, because it is the one piece of this that varies and
+	// the only thing a reader can act on or report upstream. The first version of this message
+	// swallowed it, and the very next question was "it errors with 503, what do I do?" — a
+	// number the UI had discarded.
+	case containsAny(l, "unexpected response from apple", "empty or non-plist body",
+		"service unavailable", "too many requests"):
+		if code := appleStatus(out); code != "" {
+			return fmt.Errorf("%w: Apple answered HTTP %s", ErrAppleRejected, code)
+		}
 		return ErrAppleRejected
 	}
 	return fallback
@@ -203,6 +213,17 @@ func needsAuthCodePrompt(out string) bool {
 		}
 	}
 	return false
+}
+
+// appleStatusRE pulls the HTTP status out of ipatool's error text, e.g.
+// `unexpected response from Apple (HTTP 503): ...`.
+var appleStatusRE = regexp.MustCompile(`HTTP (\d{3})`)
+
+func appleStatus(out string) string {
+	if m := appleStatusRE.FindStringSubmatch(out); m != nil {
+		return m[1]
+	}
+	return ""
 }
 
 func containsAny(s string, subs ...string) bool {
