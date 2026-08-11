@@ -462,6 +462,12 @@ function renderAppDetail() {
   // is what this comment said first, and it was wrong.
   if (item) {
     const upd = el("div", { className: "actions-block" });
+    // RE-DOWNLOAD WITH THE ACCOUNT THAT DOWNLOADED IT. An update is the same fetch as the
+    // original, so the licence that worked before is the one that will work again; any other
+    // account fails with "license not found". meta.json recorded which it was, and this screen
+    // is already showing it as "With account" two blocks up — defaulting to a different one
+    // contradicted the page's own facts.
+    const updateWith = item.account_slug;
     // Two sources for the current store version, because this screen is reached two ways: from a
     // device (the app record carries it) and from the Library (nothing does, so it is looked up).
     const si = storeInfo.get(item.bundle_id);
@@ -476,7 +482,7 @@ function renderAppDetail() {
         ]),
         (() => {
           const b = el("button", { className: "primary wide", textContent: `Update to ${storeVersion}` });
-          b.onclick = () => archive(item.id, pickedAccount(null), item.name, b);
+          b.onclick = () => archive(item.id, pickedAccount(updateWith), item.name, b);
           return b;
         })(),
       );
@@ -489,12 +495,12 @@ function renderAppDetail() {
               "storefront here avoids the App Store's prompt for the owning Apple ID's password." }),
         (() => {
           const b = el("button", { className: "danger wide", textContent: "Re-download latest" });
-          b.onclick = () => archive(item.id, pickedAccount(null), item.name, b);
+          b.onclick = () => archive(item.id, pickedAccount(updateWith), item.name, b);
           return b;
         })(),
       );
     }
-    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(null), upd);
+    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(updateWith), upd);
   }
 
   // --- install, as a LIST OF DEVICES with one tap each ---
@@ -678,15 +684,21 @@ function accountPicker(preferredSlug) {
   }
   const sel = el("select", { id: "picked-account" }, accounts.map((a) =>
     el("option", { value: a.slug, textContent: a.email })));
-  if (preferredSlug) sel.value = preferredSlug;
+  // Only preselect an account that is still signed in. Assigning a slug with no matching
+  // option leaves the select on NO option at all — a blank picker, and a download that goes
+  // nowhere — which is exactly what a removed account would have produced.
+  if (knownSlug(preferredSlug)) sel.value = preferredSlug;
   return el("label", { textContent: "Download with" }, [sel]);
 }
 
 function pickedAccount(preferredSlug) {
   const sel = $("#picked-account");
   if (sel && sel.value) return sel.value;
-  return preferredSlug || (accounts[0] && accounts[0].slug);
+  if (knownSlug(preferredSlug)) return preferredSlug;
+  return accounts[0] && accounts[0].slug;
 }
+
+const knownSlug = (slug) => !!slug && accounts.some((a) => a.slug === slug);
 
 async function archive(appID, slug, label, btn) {
   if (!slug) { toast("Add an Apple ID on the Accounts screen first.", true); return; }
