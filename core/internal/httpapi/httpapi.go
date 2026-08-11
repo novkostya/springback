@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"sync"
 
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/store"
@@ -233,10 +234,23 @@ func (s *Server) listAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	// Public() drops the keychain passphrase. It is not an Apple secret, but it decrypts
 	// ipatool's local credential file, and nothing in a browser needs it.
-	out := make([]store.PublicAccount, 0, len(accs))
-	for _, a := range accs {
-		out = append(out, a.Public())
+	out := make([]store.PublicAccount, len(accs))
+	var wg sync.WaitGroup
+	for i, a := range accs {
+		out[i] = a.Public()
+		// Ask ipatool whether each account's credentials are still readable, so an
+		// expired or half-finished sign-in is visible HERE rather than surfacing as a
+		// mysterious failure thirty seconds into a download. Concurrent because each is
+		// a separate process launch; local-only, so it is fast.
+		wg.Add(1)
+		go func(i int, a store.Account) {
+			defer wg.Done()
+			if _, err := s.Tools.AuthInfo(r.Context(), a.Home(s.Accounts.Root), a.KeychainPP); err == nil {
+				out[i].SignedIn = true
+			}
+		}(i, a)
 	}
+	wg.Wait()
 	writeJSON(w, http.StatusOK, out)
 }
 
@@ -373,8 +387,13 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusForbidden, "license_not_found",
 			"This Apple ID does not own that app. Try another account — the licence belongs to whoever originally got it.")
 	case errors.Is(err, tools.ErrNotAuthenticated):
+		// SIGN IN AGAIN, DO NOT REMOVE. Adding an Apple ID that is already on file reuses
+		// its record — same slug, same keychain passphrase, same HOME — so the session is
+		// refreshed in place and every library entry's account_slug still points at it.
+		// The first version of this message said to remove and re-add, which throws away
+		// the stored passphrase for no reason and reads as data loss.
 		writeErr(w, http.StatusUnauthorized, "not_authenticated",
-			"That account is not signed in any more. Remove it on the Accounts screen and add it again.")
+			"That Apple ID's session has expired or was never completed. Go to Accounts and sign in with the same address again — the account stays where it is, nothing is lost.")
 	case errors.Is(err, tools.ErrDeviceUnreachable):
 		writeErr(w, http.StatusConflict, "not_reachable",
 			"The device is not answering. A sleeping iPhone drops off the network entirely — wake it and try again.")

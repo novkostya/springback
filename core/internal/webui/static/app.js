@@ -410,6 +410,7 @@ async function renderAccounts() {
           el("tr", {}, [
             el("th", { textContent: "Apple ID" }),
             el("th", { textContent: "Name" }),
+            el("th", { textContent: "Session" }),
             el("th", { textContent: "Added" }),
             el("th", { textContent: "" }),
           ]),
@@ -418,6 +419,21 @@ async function renderAccounts() {
           el("tr", {}, [
             el("td", { className: "name", textContent: a.email }),
             el("td", { textContent: a.name || "—" }),
+            el("td", {}, [
+              a.signed_in
+                ? el("span", {
+                    className: "status available",
+                    textContent: "signed in",
+                    // Honest about what was actually checked: ipatool read the local
+                    // credential file. It did not ask Apple.
+                    title: "Credentials are stored on this box. Apple can still expire the session — the first sign of that is a download failing.",
+                  })
+                : el("span", {
+                    className: "status delisted",
+                    textContent: "SIGN IN AGAIN",
+                    title: "No usable credentials stored for this Apple ID.",
+                  }),
+            ]),
             el("td", { textContent: fmtDate(a.added_at) }),
             el("td", { className: "actions" }, [
               (() => {
@@ -498,6 +514,13 @@ async function renderAccounts() {
     }),
     list,
     el("h2", { className: "screen", style: "margin-top:28px", textContent: "Add an Apple ID" }),
+    el("p", {
+      className: "screen-hint",
+      textContent:
+        "Apple sessions expire after a while. To renew one, sign in here with the same address — " +
+        "the existing account is reused, so the library keeps working and nothing is lost. " +
+        "There is no need to remove it first.",
+    }),
     form,
     el("p", {
       className: "hint",

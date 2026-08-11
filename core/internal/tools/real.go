@@ -11,8 +11,13 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/creack/pty"
+	"golang.org/x/sys/unix"
 )
 
 // Real shells out to the tools SPEC §3 verified, and talks to the iTunes lookup API.
@@ -66,7 +71,9 @@ func (r *Real) run(ctx context.Context, timeout time.Duration, env []string, std
 	err := cmd.Run()
 	out := buf.String()
 	if err != nil {
-		return out, classify(out, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(out)))
+		// sanitize only on the path where the text becomes a MESSAGE. The raw output is
+		// still returned for parsing, because the parsers key on the tool's own words.
+		return out, classify(out, fmt.Errorf("%s: %w: %s", name, err, sanitize(out)))
 	}
 	return out, nil
 }
@@ -173,7 +180,7 @@ func (r *Real) InstallApp(ctx context.Context, udid, ipaPath string, onProgress 
 		if err := classify(seen.String(), nil); err != nil {
 			return err
 		}
-		last := lastMeaningfulLine(seen.String())
+		last := sanitize(lastMeaningfulLine(seen.String()))
 		if waitErr != nil && last == "" {
 			return fmt.Errorf("%w: %v", ErrInstallIncomplete, waitErr)
 		}
@@ -199,16 +206,169 @@ func ipatoolEnv(home string) []string {
 	return []string{"HOME=" + home}
 }
 
+// AuthLogin signs in, with the password delivered over a PTY.
+//
+// WHY A PTY, AND NOT STDIN OR --password. SPEC §3 says "password over stdin, never argv", on the
+// reasoning that argv is world-readable in /proc and lands in `ps`. That requirement is right and
+// stands. The MECHANISM in the spec does not work against ipatool 2.3.2, and both halves of it
+// were measured on 2026-08-11:
+//
+//   - With --non-interactive, ipatool does not prompt at all. It refuses immediately:
+//     "password is required when not running in interactive mode; use the \"--password\" flag".
+//     Nothing is ever read from stdin.
+//   - Without --non-interactive it does prompt — but it reads the password with a TERMINAL read
+//     on fd 0, so a pipe fails with "failed to read password: inappropriate ioctl for device".
+//
+// So the two documented options are mutually exclusive: argv, or a real terminal. A PTY is the
+// third door, and it satisfies what the spec actually asked for — the secret goes through a
+// file descriptor pair private to these two processes, never appears in argv, and is gone when
+// the call returns. --non-interactive is therefore DROPPED for this one call, and only this one:
+// every other ipatool invocation still passes it, because none of them needs a password.
 func (r *Real) AuthLogin(ctx context.Context, home, passphrase, email, password, authCode string) error {
-	args := []string{"auth", "login", "-e", email, "--keychain-passphrase", passphrase, "--non-interactive"}
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
+	args := []string{"auth", "login", "-e", email, "--keychain-passphrase", passphrase}
 	if authCode != "" {
+		// The 2FA code is a short-lived, single-use value and the spec's own invocation
+		// passes it as a flag. It is the PASSWORD that must not reach argv.
 		args = append(args, "--auth-code", authCode)
 	}
-	// THE PASSWORD GOES OVER STDIN. Omitting -p makes ipatool prompt, and the prompt reads
-	// stdin — so the secret never appears in argv, where any `ps` on the box would show it,
-	// and never in a log line. It is held in memory for the length of this call only.
-	_, err := r.run(ctx, 5*time.Minute, ipatoolEnv(home), password+"\n", "ipatool", args...)
-	return err
+
+	cmd := exec.CommandContext(ctx, "ipatool", args...)
+	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "TERM=dumb"}, ipatoolEnv(home)...)
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return fmt.Errorf("ipatool: cannot allocate a terminal for the password prompt: %w", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	// ECHO OFF BEFORE THE PASSWORD IS WRITTEN. ipatool's own reader disables echo while it
+	// prompts, but that happens on ITS schedule, and anything echoed before then comes back
+	// on the master and lands in the captured output below — which is surfaced in errors. This
+	// closes that window rather than trusting the timing. Best-effort: if the terminal will not
+	// take the setting, scrubSecret below is still between the password and any output.
+	disableEcho(ptmx)
+
+	// Read the master concurrently with writing. A pty has a small kernel buffer, so writing
+	// the password while nothing drains the other side can deadlock before the prompt appears.
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	var killedForAuthCode bool
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		chunk := make([]byte, 4096)
+		prompted := false
+		for {
+			n, err := ptmx.Read(chunk)
+			if n > 0 {
+				mu.Lock()
+				buf.Write(chunk[:n])
+				seen := buf.String()
+				mu.Unlock()
+
+				// THE SECOND PROMPT IS A HANG, NOT AN ERROR, and only because this
+				// call is interactive now. With --non-interactive (every other
+				// ipatool call here) a missing 2FA code is an immediate refusal. On
+				// a terminal, ipatool asks for the code and WAITS — and the only
+				// thing on the other end is this process, which has nothing more to
+				// send. That is a five-minute timeout on the single most ordinary
+				// path there is: the first sign-in to any 2FA-protected Apple ID.
+				//
+				// So the prompt is treated as the answer it actually is: this
+				// account needs a code. Kill it and say so, and the UI shows its
+				// second form. Killing here also means the caller sees ErrNeeds2FA
+				// rather than a context deadline, which is the difference between
+				// "enter your code" and "something timed out".
+				if !prompted && authCode == "" && needsAuthCodePrompt(seen) {
+					prompted = true
+					mu.Lock()
+					killedForAuthCode = true
+					mu.Unlock()
+					_ = cmd.Process.Kill()
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	if _, err := io.WriteString(ptmx, password+"\n"); err != nil {
+		_ = cmd.Process.Kill()
+		<-done
+		return fmt.Errorf("ipatool: could not send the password: %w", err)
+	}
+
+	waitErr := cmd.Wait()
+	_ = ptmx.Close()
+	<-done
+
+	mu.Lock()
+	out := buf.String()
+	killed := killedForAuthCode
+	mu.Unlock()
+
+	// Checked BEFORE the exit status, because the exit status here is "killed" — an accurate
+	// description of what this code did and a useless one for the user, who needs to be asked
+	// for a code.
+	if killed {
+		return ErrNeeds2FA
+	}
+
+	// BELT AND BRACES. If the password ever came back on the master — a terminal that ignored
+	// the echo setting, a future ipatool that echoes it deliberately — it must not travel any
+	// further. Everything downstream of this line is safe to log, wrap in an error, or send to
+	// a browser.
+	out = scrubSecret(out, password)
+
+	if waitErr != nil {
+		return classify(out, fmt.Errorf("ipatool: %w: %s", waitErr, strings.TrimSpace(sanitize(out))))
+	}
+	// ipatool exits 0 on a failed login and reports it in the output, so the exit code alone
+	// would call a rejected password a success.
+	if err := classify(out, nil); err != nil {
+		return err
+	}
+	if strings.Contains(strings.ToLower(out), "success=false") {
+		return fmt.Errorf("ipatool: %s", strings.TrimSpace(sanitize(lastMeaningfulLine(out))))
+	}
+	return nil
+}
+
+// disableEcho turns off terminal echo on the pty, best-effort.
+func disableEcho(f *os.File) {
+	var t unix.Termios
+	raw, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	if err != nil {
+		return
+	}
+	t = *raw
+	t.Lflag &^= unix.ECHO
+	_ = unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, &t)
+}
+
+// scrubSecret removes a secret from text that is about to be shown to somebody.
+func scrubSecret(s, secret string) string {
+	// A short or empty secret would turn this into a find-and-replace on common substrings.
+	if len(secret) < 4 {
+		return s
+	}
+	return strings.ReplaceAll(s, secret, "[redacted]")
+}
+
+// ansiRE matches the SGR colour escapes ipatool's console writer emits.
+var ansiRE = regexp.MustCompile(`\x1b\[[0-9;]*[A-Za-z]`)
+
+// sanitize makes a tool's raw output fit to show a person.
+//
+// ipatool colours its output unconditionally — it does not check whether the destination is a
+// terminal — so the escapes travel with the message and render in a browser as a row of empty
+// boxes around the words that matter. Observed in the UI on a real failed login.
+func sanitize(s string) string {
+	return strings.TrimSpace(ansiRE.ReplaceAllString(s, ""))
 }
 
 func (r *Real) AuthInfo(ctx context.Context, home, passphrase string) (Account, error) {

@@ -39,6 +39,15 @@ type PublicAccount struct {
 	Email   string    `json:"email"`
 	Name    string    `json:"name"`
 	AddedAt time.Time `json:"added_at"`
+	// SignedIn means ipatool can still read this account's stored credentials.
+	//
+	// IT IS NOT A PROMISE THAT APPLE WILL ACCEPT THEM. `ipatool auth info` reads the local
+	// keychain file; it does not call Apple. So false is conclusive — there is nothing stored,
+	// sign in again — while true means only "credentials are on disk". A session Apple has
+	// since expired still reads as true, and the first sign of that is a download failing.
+	// Named and documented rather than dressed up as a health check, because a green tick that
+	// silently means less than it looks like is worse than no tick.
+	SignedIn bool `json:"signed_in"`
 }
 
 // Public strips what must never reach the browser.

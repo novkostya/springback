@@ -154,3 +154,31 @@ func TestClassifyFailureModes(t *testing.T) {
 		t.Errorf("unrecognised output was classified as %v instead of passed through", got)
 	}
 }
+
+// The 2FA prompt has to be told apart from the PASSWORD prompt and from an error message that
+// happens to mention the same words. Getting the first wrong reports every login as needing a
+// code; getting the second wrong kills a process that was already finishing.
+func TestNeedsAuthCodePrompt(t *testing.T) {
+	waiting := []string{
+		"INF enter 2FA code:",
+		"INF enter auth code: ",
+		"enter verification code:\n",
+	}
+	for _, s := range waiting {
+		if !needsAuthCodePrompt(s) {
+			t.Errorf("did not detect a waiting prompt: %q — this hangs until the timeout", s)
+		}
+	}
+	notWaiting := []string{
+		"INF enter password:",                                  // the FIRST prompt
+		`ERR error="2FA code is required" success=false`,       // an error, already exiting
+		`ERR error="invalid auth code provided" success=false`, // ditto
+		"Install: Complete",
+		"",
+	}
+	for _, s := range notWaiting {
+		if needsAuthCodePrompt(s) {
+			t.Errorf("false positive on %q", s)
+		}
+	}
+}

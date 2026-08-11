@@ -123,6 +123,29 @@ func classify(out string, fallback error) error {
 	return fallback
 }
 
+// needsAuthCodePrompt reports whether ipatool is sitting at a 2FA prompt waiting for input.
+//
+// Deliberately narrow: it must match a PROMPT and not the word "password", or the first prompt
+// would be read as the second and every login would be reported as needing a code. The trailing
+// colon is what distinguishes ipatool asking a question from ipatool describing an error.
+func needsAuthCodePrompt(out string) bool {
+	l := strings.ToLower(out)
+	for _, marker := range []string{"2fa code", "auth code", "verification code", "two-factor"} {
+		i := strings.Index(l, marker)
+		if i < 0 {
+			continue
+		}
+		// A prompt ends in ':' with nothing after it yet — the process is waiting. An
+		// error message mentioning the same words is a complete sentence and is left to
+		// classify() and the exit path.
+		rest := strings.TrimRight(l[i+len(marker):], " \t\r\n")
+		if strings.HasSuffix(rest, ":") {
+			return true
+		}
+	}
+	return false
+}
+
 func containsAny(s string, subs ...string) bool {
 	for _, sub := range subs {
 		if strings.Contains(s, sub) {
