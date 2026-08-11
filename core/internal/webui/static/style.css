@@ -177,8 +177,19 @@ main { padding: 16px; max-width: 760px; margin: 0 auto; }
 /* A never-public listing is not a finding — muted, so it cannot be mistaken for one. */
 .status.not_listed { background: #262220; color: #8d857c; }
 
+/* The body has no padding of its own, because the rows inside it run edge to edge — their own
+   separators are meant to span the card. Anything that is NOT a row (the loading line, an error)
+   has to supply the inset itself, or it sits flush against the card edge while every row above
+   it is indented. */
 .device-body { border-top: 1px solid var(--line); padding: 0 0 4px; }
-.summary { padding: 12px; }
+.device-body > p,
+.device-body > .error {
+  margin: 0;
+  padding: 14px 12px;
+}
+.device-body > .error { margin: 12px; padding: 10px 12px; }
+
+.summary { padding: 14px 12px 10px; }
 .summary-line { margin: 0; font-size: 14px; }
 .summary strong { color: var(--accent); }
 .sub { color: var(--dim); font-size: 11.5px; margin: 5px 0 0; }
@@ -383,4 +394,28 @@ main { padding-bottom: 96px; }
 .ring.spin {
   background: conic-gradient(var(--accent) 90deg, var(--panel-2) 0);
   animation: spin 0.9s linear infinite;
+}
+
+/* "in library" is a SECOND, INDEPENDENT fact about an app, not a qualifier on the store verdict.
+   As trailing grey text beside the status chip it read as a fragment of that chip, so it is a
+   badge of its own, stacked under it. */
+.row-right.stack {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.badge {
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+.badge.library {
+  background: #1c2418;
+  border: 1px solid #3b4a2e;
+  color: #9dbb8a;
 }

@@ -175,13 +175,26 @@ function renderDevices() {
   root.replaceChildren(...frag);
 }
 
+// deviceLabel disambiguates devices that share a name.
+//
+// TWO PHONES CAN HAVE THE SAME NAME, and on this stand two do: `alina-iphone` is two different
+// handsets with different udids and different models. Rendered plainly they are two identical
+// rows and there is no way to tell which one you are about to install onto. A name is a label
+// the owner chose; the udid is the identity.
+function deviceLabel(d) {
+  const name = d.name || d.udid;
+  const clashes = devices.filter((o) => (o.name || o.udid) === name).length > 1;
+  if (!clashes || !d.udid) return name;
+  return `${name} · ${d.udid.slice(-6)}`;
+}
+
 function deviceCard(d) {
   // NO "N at risk" BADGE HERE. It duplicated the summary line directly beneath it — and the
   // summary is the better statement of the two, because it carries the denominator ("11 of 162")
   // and what was checked. Two counts of the same thing in one card is one too many.
   const head = el("button", { className: "row device-row" }, [
     el("div", { className: "row-main" }, [
-      el("div", { className: "row-title", textContent: d.name || d.udid }),
+      el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
         className: "row-sub",
         textContent: [d.product_type, d.ios && `iOS ${d.ios}`, d.region].filter(Boolean).join(" · "),
@@ -272,9 +285,12 @@ function appRow(a, device) {
       el("div", { className: "row-title", textContent: a.store_name || a.name || a.bundle_id }),
       el("div", { className: "row-sub", textContent: a.bundle_id }),
     ]),
-    el("div", { className: "row-right" }, [
+    // Stacked, not side by side: the store verdict is the primary fact and "in library" is a
+    // second, independent one. In a row they competed for the same horizontal space and the
+    // trailing grey text read as a fragment of the badge next to it.
+    el("div", { className: "row-right stack" }, [
       el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }),
-      a.in_library ? el("span", { className: "tick", textContent: "in library" }) : null,
+      a.in_library ? el("span", { className: "badge library", textContent: "in library" }) : null,
     ]),
   ]);
   r.onclick = () => showAppDetail({ app: a, device });
@@ -322,7 +338,7 @@ function renderAppDetail() {
   const head = el("div", { className: "detail-head" }, [
     el("h2", { className: "screen", textContent: title }),
     a ? el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }) : null,
-    item ? el("span", { className: "tick", textContent: "in library" }) : null,
+    item ? el("span", { className: "badge library", textContent: "in library" }) : null,
   ]);
 
   const blocks = [head, el("dl", { className: "facts" }, facts)];
@@ -435,7 +451,7 @@ function installRow(d, item) {
 
   const r = el("button", { className: "row" + (job ? " busy" : "") }, [
     el("div", { className: "row-main" }, [
-      el("div", { className: "row-title", textContent: d.name || d.udid }),
+      el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
         className: "row-sub",
         textContent: job
