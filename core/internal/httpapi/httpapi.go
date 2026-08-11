@@ -402,11 +402,21 @@ func (s *Server) addAccount(w http.ResponseWriter, r *http.Request) {
 		// 409 needs_2fa, per SPEC §5. The record already exists, so the second call needs
 		// only the slug and the code — and, crucially, NOT the password again: springback
 		// never holds it between requests.
+		// A PROMPT IS NOT PROOF THAT A CODE WAS SENT, and this message used to claim it was.
+		//
+		// Measured: ipatool prints `INF enter 2FA code:` for an Apple ID THAT DOES NOT EXIST,
+		// with a junk password — it falls through to asking whenever it cannot read Apple's
+		// reply as a success. Its output is byte-identical in both cases, so springback
+		// cannot tell a real challenge from Apple simply refusing the login, and must not
+		// pretend otherwise. Reported as "it said 2FA but no code arrived", which is exactly
+		// what the old wording set someone up to expect.
 		writeJSON(w, http.StatusConflict, map[string]any{
 			"error": "needs_2fa",
 			"slug":  acc.Slug,
-			"detail": "Apple sent a verification code to your other devices. " +
-				"Enter it to finish signing in.",
+			"detail": "Apple is asking for a verification code. If one arrived on your other devices, enter it. " +
+				"IF NO CODE ARRIVED, none is coming: that is the current Apple outage refusing the sign-in, and " +
+				"ipatool asks for a code anyway when it cannot read the reply. Leave it for a while rather than " +
+				"retrying — accounts already signed in keep working.",
 		})
 		return
 	}

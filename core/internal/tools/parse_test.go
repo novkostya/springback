@@ -218,3 +218,19 @@ func TestStripBarLeavesTheMessage(t *testing.T) {
 		t.Errorf("the message was damaged: %q", got)
 	}
 }
+
+// Captured from a live run against an Apple ID THAT DOES NOT EXIST, with a junk password.
+// ipatool still prompts for a code — it falls through to asking whenever it cannot read Apple's
+// reply as a success. The detector must fire (otherwise the process hangs until the timeout),
+// but nothing built on it may claim that Apple sent a code, because this output is identical to
+// a genuine challenge.
+func TestRealPromptFromAFailedLoginStillDetected(t *testing.T) {
+	const captured = "2:10PM INF enter password:\r\n2:10PM INF enter 2FA code:"
+	if !needsAuthCodePrompt(captured) {
+		t.Fatal("the prompt was missed, so the process would hang until the 5-minute timeout")
+	}
+	// The password prompt on its own must never trip it, or every login would report 2FA.
+	if needsAuthCodePrompt("2:10PM INF enter password:") {
+		t.Error("the password prompt was read as a 2FA prompt")
+	}
+}

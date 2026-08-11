@@ -68,7 +68,12 @@ func main() {
 		t = tools.NewFake()
 		log.Warn("running with the FAKE tool layer — nothing here talks to a real device or Apple")
 	} else {
-		t = tools.NewReal(*muxAddr, *lockdownDir)
+		real := tools.NewReal(*muxAddr, *lockdownDir)
+		if *debug {
+			// Only with --debug: these lines carry Apple's replies verbatim.
+			real.Debug = func(out string) { log.Debug("ipatool auth output", "out", out) }
+		}
+		t = real
 	}
 
 	for _, dir := range []string{*libraryDir, *accountsDir} {

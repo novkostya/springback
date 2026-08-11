@@ -39,6 +39,13 @@ type Real struct {
 	// LockdownDir holds the pairing records, mounted READ-ONLY from quince's container
 	// (SPEC §2). springback only ever lists it.
 	LockdownDir string
+	// Debug, when set, receives each auth attempt's raw output — ANSI stripped and with the
+	// password scrubbed out.
+	//
+	// It exists because "it says 2FA but no code arrived" is unanswerable without seeing what
+	// ipatool actually printed, and that output was being discarded on every path. Off unless
+	// --debug is passed, since the alternative is writing Apple's replies to a log by default.
+	Debug func(string)
 }
 
 // NewReal builds a Real with the defaults every deployment uses.
@@ -339,18 +346,25 @@ func (r *Real) AuthLogin(ctx context.Context, home, passphrase, email, password,
 	killed := killedForAuthCode
 	mu.Unlock()
 
+	// BELT AND BRACES. If the password ever came back on the master — a terminal that ignored
+	// the echo setting, a future ipatool that echoes it deliberately — it must not travel any
+	// further. Everything downstream of this line is safe to log, wrap in an error, or send to
+	// a browser.
+	out = scrubSecret(out, password)
+
+	// Logged BEFORE any early return, and that ordering is the point. It sat after the
+	// `killed` branch, so the one path anybody actually needed to inspect — "it says 2FA and
+	// no code arrived" — was the single path that logged nothing at all.
+	if r.Debug != nil {
+		r.Debug(sanitize(out))
+	}
+
 	// Checked BEFORE the exit status, because the exit status here is "killed" — an accurate
 	// description of what this code did and a useless one for the user, who needs to be asked
 	// for a code.
 	if killed {
 		return ErrNeeds2FA
 	}
-
-	// BELT AND BRACES. If the password ever came back on the master — a terminal that ignored
-	// the echo setting, a future ipatool that echoes it deliberately — it must not travel any
-	// further. Everything downstream of this line is safe to log, wrap in an error, or send to
-	// a browser.
-	out = scrubSecret(out, password)
 
 	if waitErr != nil {
 		return classify(out, fmt.Errorf("ipatool: %w: %s", waitErr, strings.TrimSpace(sanitize(out))))
