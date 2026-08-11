@@ -46,23 +46,25 @@ body {
    anywhere rather than setting a minimum width the viewport cannot meet. */
 .row-sub, .fact dd, .job-line, .job-detail { overflow-wrap: anywhere; }
 
-/* THE HEADER IS IN NORMAL FLOW — not fixed, not sticky, not positioned at all.
+/* STICKY, BY AN EXPLICIT DECISION rather than by not having thought about it.
 
-   Four fixes went into this bar and each one landed back on the same class of bug, because
-   each kept it positioned against the viewport. Reported symptom that finally named the
-   cause: it happens on pages whose content is only SLIGHTLY taller than the screen, where
-   it looks scrolled to the bottom and shifted at once. That is the visual viewport moving —
-   iOS collapses and expands its toolbars, changing the viewport height by a few pixels, which
-   on such a page flips it between scrollable and not. Anything positioned against the
-   viewport, `fixed` OR `sticky`, is offset for a frame while that settles.
+   Anything positioned against the viewport can be offset for a frame while iOS resolves a
+   toolbar collapse — most visibly on a page only slightly taller than the screen, which is
+   where the reported flicker lives. Putting the header in normal flow removes that entirely,
+   and was tried: the title and tabs then scroll away, which is worse to use every day than a
+   rare one-frame shift is to look at. The Operator made that trade knowingly; do not quietly
+   un-make it by "fixing" the flicker with position: static again.
 
-   An element in normal flow has nothing to resolve against and cannot do this. The cost is
-   that the title and tabs scroll away with the content, which for a four-screen tool is a
-   fair trade for a bar that never moves when it should not. */
+   What must NOT come back with it: forced layer promotion (transform/will-change), which
+   made the header vanish outright for a frame instead of shifting slightly. Sticky and
+   compositor promotion do not mix. */
 header {
   padding: 14px 16px 0;
   border-bottom: 1px solid var(--line);
   background: var(--bg);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 /* NO COMPOSITOR PROMOTION HERE, AND THAT IS THE FIX RATHER THAN AN OMISSION.
    I added `transform: translateZ(0); will-change: transform` to stop a repaint flicker, and a
