@@ -1008,3 +1008,13 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
   pollJobs();
 })();
 
+// The header is FIXED, not sticky — see style.css for why — so the content has to reclaim its
+// height as padding, and that height is measured rather than hardcoded: it changes with the
+// user's text size, and on a notched phone with the safe-area inset.
+function measureHeader() {
+  const h = document.querySelector("header").getBoundingClientRect().height;
+  document.documentElement.style.setProperty("--header-h", `${Math.round(h)}px`);
+}
+measureHeader();
+addEventListener("resize", measureHeader);
+addEventListener("orientationchange", measureHeader);

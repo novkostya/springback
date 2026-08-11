@@ -14,6 +14,7 @@
   --radius: 10px;
   /* 44px is Apple's minimum comfortable touch target, and this is a phone-first UI. */
   --tap: 44px;
+  --header-h: 113px;
 }
 
 * { box-sizing: border-box; }
@@ -46,24 +47,14 @@ body {
    anywhere rather than setting a minimum width the viewport cannot meet. */
 .row-sub, .fact dd, .job-line, .job-detail { overflow-wrap: anywhere; }
 
-/* STICKY, BY AN EXPLICIT DECISION rather than by not having thought about it.
-
-   Anything positioned against the viewport can be offset for a frame while iOS resolves a
-   toolbar collapse — most visibly on a page only slightly taller than the screen, which is
-   where the reported flicker lives. Putting the header in normal flow removes that entirely,
-   and was tried: the title and tabs then scroll away, which is worse to use every day than a
-   rare one-frame shift is to look at. The Operator made that trade knowingly; do not quietly
-   un-make it by "fixing" the flicker with position: static again.
-
-   What must NOT come back with it: forced layer promotion (transform/will-change), which
-   made the header vanish outright for a frame instead of shifting slightly. Sticky and
-   compositor promotion do not mix. */
 header {
   padding: 14px 16px 0;
   border-bottom: 1px solid var(--line);
-  background: var(--bg);
-  position: sticky;
+  position: fixed;
+  left: 0;
+  right: 0;
   top: 0;
+  background: var(--bg);
   z-index: 5;
 }
 /* NO COMPOSITOR PROMOTION HERE, AND THAT IS THE FIX RATHER THAN AN OMISSION.
@@ -105,9 +96,7 @@ main { padding: 16px; max-width: 760px; margin: 0 auto; }
    stacked sticky boxes to resolve, and the header flickered for a frame on the way back.
    Removed from the layout entirely when there is nothing in it. */
 #jobs:empty { display: none; }
-/* In flow too, for the same reason. A progress strip that scrolls away with the page is a
-   smaller loss than a bar that jitters. */
-#jobs { padding: 10px 16px 0; }
+#jobs { position: sticky; top: var(--header-h); z-index: 4; padding: 10px 16px 0; }
 .job {
   background: var(--panel);
   border: 1px solid var(--line);
@@ -499,7 +488,7 @@ nav a.active { color: var(--ink); border-bottom-color: var(--accent); }
 /* The offset goes on the BODY, not on main: the fake-tools banner and the jobs strip are
    siblings of main, so an offset applied only to main would leave them underneath the fixed
    header. Pushing the whole flow down covers everything the header would otherwise cover. */
-/* No offset needed: the header occupies its own space again. */
+body { padding-top: var(--header-h); }
 
 /* The back control belongs to the screen it goes back FROM, not to the app header. Keeping it
    out of the header is what lets the header be genuinely invariant across navigations. */
