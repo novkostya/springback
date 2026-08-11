@@ -121,6 +121,14 @@ dev-stop: ## Remove the dev container
 .PHONY: push
 push: preflight ## Push to $(REGISTRY) (creds via env only; never committed)
 	@test -n "$(REGISTRY)" || { echo "ERROR: set REGISTRY=host[:port]/repo (env only)"; exit 1; }
+	@# SAY WHICH IMAGE IS BEING PUSHED, because getting it wrong is silent and this already
+	@# happened once: `make image IMAGE_TAG=staging VERSION=0.1.0` then `make push PUSH_TAG=staging`
+	@# defaults IMAGE_TAG back to `local`, so it retagged the WRONG local image and shipped a
+	@# 0.0.0-dev binary under the `staging` tag. Nothing in the output contradicted it — the push
+	@# succeeded, the container started, and only /api/health disagreed.
+	@echo "push: $(IMAGE_NAME):$(IMAGE_TAG)  ->  $(REGISTRY)/$(IMAGE_NAME):$(PUSH_TAG)"
+	@$(RUNTIME) image inspect $(IMAGE_NAME):$(IMAGE_TAG) >/dev/null 2>&1 || { \
+	  echo "ERROR: no local image $(IMAGE_NAME):$(IMAGE_TAG) — build it first, e.g. make image IMAGE_TAG=$(IMAGE_TAG)"; exit 1; }
 	$(RUNTIME) tag  $(IMAGE_NAME):$(IMAGE_TAG) $(REGISTRY)/$(IMAGE_NAME):$(PUSH_TAG)
 	$(RUNTIME) push $(REGISTRY)/$(IMAGE_NAME):$(PUSH_TAG)
 PUSH_TAG ?= $(IMAGE_TAG)
