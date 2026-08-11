@@ -463,7 +463,97 @@ func logfmtValue(line, key string) (string, bool) {
 	return rest, rest != ""
 }
 
-func (r *Real) Download(ctx context.Context, home, passphrase string, appID int64, outPath string) (DownloadResult, error) {
+// Download fetches an owned app by numeric id, reporting progress as it goes.
+//
+// RUN UNDER A PTY, FOR THE PROGRESS. ipatool only draws its progress bar when it believes it is
+// talking to a terminal; with --non-interactive it prints nothing at all until the download is
+// over, which is what made a ~500 MB fetch a blank page for minutes. On a terminal it emits
+// frames like:
+//
+//	downloading  99% |███████████...███ | (195/197 MB, 35 MB/s)
+//
+// separated by carriage returns. Captured from the real tool on the staging host.
+//
+// The same PTY trick as AuthLogin, for an unrelated reason — there it was the only way to pass a
+// secret without argv, here it is the only way to see progress at all.
+func (r *Real) Download(ctx context.Context, home, passphrase string, appID int64, outPath string, onProgress func(DownloadProgress)) (DownloadResult, error) {
+	if onProgress == nil {
+		return r.downloadPlain(ctx, home, passphrase, appID, outPath)
+	}
+
+	ctx, cancel := context.WithTimeout(ctx, r.DownloadTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ipatool", "download",
+		"-i", fmt.Sprintf("%d", appID),
+		"-o", outPath,
+		"--keychain-passphrase", passphrase)
+	// TERM matters: ipatool's progress library renders differently, or not at all, without
+	// one. `xterm` is a safe, universally understood value.
+	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "TERM=xterm"}, ipatoolEnv(home)...)
+
+	ptmx, err := pty.Start(cmd)
+	if err != nil {
+		return DownloadResult{}, fmt.Errorf("ipatool: cannot allocate a terminal: %w", err)
+	}
+	defer func() { _ = ptmx.Close() }()
+
+	var mu sync.Mutex
+	var buf bytes.Buffer
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		chunk := make([]byte, 8192)
+		var frame bytes.Buffer
+		last := -1
+		for {
+			n, err := ptmx.Read(chunk)
+			if n > 0 {
+				mu.Lock()
+				buf.Write(chunk[:n])
+				mu.Unlock()
+
+				// Frames are separated by CR, not LF — the bar redraws in place.
+				for _, b := range chunk[:n] {
+					if b == '\r' || b == '\n' {
+						if p, ok := parseDownloadFrame(frame.String()); ok && p.Percent != last {
+							last = p.Percent
+							onProgress(p)
+						}
+						frame.Reset()
+						continue
+					}
+					// A bar is thousands of block glyphs; cap the frame so a
+					// missing CR cannot grow this without bound.
+					if frame.Len() < 4096 {
+						frame.WriteByte(b)
+					}
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}()
+
+	waitErr := cmd.Wait()
+	_ = ptmx.Close()
+	<-done
+
+	mu.Lock()
+	out := buf.String()
+	mu.Unlock()
+
+	if waitErr != nil {
+		return DownloadResult{Output: out}, classify(out, fmt.Errorf("ipatool: %w: %s", waitErr, sanitize(lastMeaningfulLine(stripBar(out)))))
+	}
+	if err := classify(out, nil); err != nil {
+		return DownloadResult{Output: out}, err
+	}
+	return DownloadResult{Purchased: parsePurchased(out), Path: outPath, Output: out}, nil
+}
+
+func (r *Real) downloadPlain(ctx context.Context, home, passphrase string, appID int64, outPath string) (DownloadResult, error) {
 	// -i, NOT -b. This is the single most important line in the spec: -b resolves a bundle id
 	// by SEARCHING the store, and a delisted app is not in search, so -b fails with "app not
 	// found" for exactly the apps springback exists to fetch. Measured both ways (SPEC §3).

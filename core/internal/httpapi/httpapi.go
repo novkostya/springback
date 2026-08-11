@@ -7,6 +7,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log/slog"
@@ -15,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/novkostya/springback/core/internal/devices"
+	"github.com/novkostya/springback/core/internal/jobs"
 	"github.com/novkostya/springback/core/internal/store"
 	"github.com/novkostya/springback/core/internal/storefront"
 	"github.com/novkostya/springback/core/internal/tools"
@@ -29,6 +31,7 @@ type Server struct {
 	Library  *store.Library
 	Accounts *store.Accounts
 	Resolver *storefront.Resolver
+	Jobs     *jobs.Registry
 	Log      *slog.Logger
 	// Fake reports whether the tool layer is the fake one. The UI shows a banner: a screen
 	// full of plausible device names that is not talking to any device would otherwise be
@@ -54,6 +57,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/accounts", s.addAccount)
 	mux.HandleFunc("POST /api/accounts/{slug}/2fa", s.account2FA)
 	mux.HandleFunc("DELETE /api/accounts/{slug}", s.deleteAccount)
+
+	mux.HandleFunc("GET /api/jobs", s.listJobs)
+	mux.HandleFunc("GET /api/jobs/{id}", s.getJob)
 
 	mux.HandleFunc("GET /api/lookup", s.lookup)
 
@@ -132,21 +138,48 @@ func (s *Server) install(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "not_in_library", "That app is not in the library.")
 		return
 	}
-	// The request is held open: installs are slow and v0.1 has no job queue (SPEC §5). The
-	// UI says so before starting one.
-	err = s.Tools.InstallApp(r.Context(), r.PathValue("udid"), s.Library.IPAPath(item.ID), nil)
-	if err != nil {
-		s.fail(w, err)
-		return
+	udid := r.PathValue("udid")
+
+	// A JOB, NOT A HELD-OPEN REQUEST. ideviceinstaller already reports its stage and
+	// percentage; until now that went to a nil callback and the user watched a spinner.
+	target := udid
+	if devs, err := s.Devices.List(r.Context()); err == nil {
+		for _, d := range devs {
+			if d.UDID == udid && d.Name != "" {
+				target = d.Name
+			}
+		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"installed": item,
+	job := s.Jobs.Start(jobs.Install, item.Name, target, func(ctx context.Context, h *jobs.Handle) (any, error) {
+		err := s.Tools.InstallApp(ctx, udid, s.Library.IPAPath(item.ID), func(p tools.InstallProgress) {
+			h.Progress(p.Percent, p.Stage, "")
+		})
+		if err != nil {
+			return nil, err
+		}
+		return item, nil
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{
+		"job": job,
 		// FairPlay defers to FIRST LAUNCH, not install (SPEC §7). An install onto a
 		// device signed into a different Apple ID succeeds, and the user is asked to sign
 		// in as the licensing account the first time they open the app. Saying so here is
 		// what stops every cross-account install from looking broken.
-		"note": "Installed. If this device is signed into a different Apple ID than the one that owns the app, iOS will ask for the owning Apple ID the first time you open it — that is normal, and it works from then on.",
+		"note": "If this device is signed into a different Apple ID than the one that owns the app, iOS will ask for the owning Apple ID the first time you open it — that is normal, and it works from then on.",
 	})
+}
+
+func (s *Server) listJobs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, s.Jobs.List())
+}
+
+func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
+	job, ok := s.Jobs.Get(r.PathValue("id"))
+	if !ok {
+		writeErr(w, http.StatusNotFound, "no_such_job", "That job is finished and no longer tracked.")
+		return
+	}
+	writeJSON(w, http.StatusOK, job)
 }
 
 // ---------------------------------------------------------------------------
@@ -168,6 +201,10 @@ func (s *Server) listLibrary(w http.ResponseWriter, r *http.Request) {
 type addLibraryReq struct {
 	AppID       int64  `json:"app_id"`
 	AccountSlug string `json:"account_slug"`
+	// Label is what to call this download on screen while it runs. Cosmetic — the real name
+	// is read out of the archive when it lands — but "downloading 6744684419" is a poor thing
+	// to watch for two minutes.
+	Label string `json:"label,omitempty"`
 }
 
 func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
@@ -190,23 +227,32 @@ func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	// Held open for ~30 s or more (SPEC §5 allows it for v0.1; the UI says so).
-	res, err := s.Tools.Download(r.Context(), acc.Home(s.Accounts.Root), acc.KeychainPP, req.AppID, out)
-	if err != nil {
-		// PrepareDir made the directory before ipatool ran; a failed download must not leave
-		// it behind as a permanent monument to a typo'd id.
-		s.Library.DiscardIfEmpty(req.AppID)
-		s.fail(w, err)
-		return
+
+	label := req.Label
+	if label == "" {
+		label = strconv.FormatInt(req.AppID, 10)
 	}
-	item, err := s.Library.Record(req.AppID, acc.Slug)
-	if err != nil {
-		s.fail(w, err)
-		return
-	}
-	// A newly archived app teaches the resolver nothing, but it does teach the LIBRARY a
-	// bundle-id -> numeric-id pair, which is what makes the next device's archive one click.
-	writeJSON(w, http.StatusOK, map[string]any{"item": item, "purchased": res.Purchased})
+
+	// A JOB, NOT A HELD-OPEN REQUEST. ~500 MB at 35 MB/s is tens of seconds on a good link
+	// and minutes on a bad one, and the old shape gave the user a spinner and no number for
+	// all of it.
+	job := s.Jobs.Start(jobs.Download, label, "", func(ctx context.Context, h *jobs.Handle) (any, error) {
+		res, err := s.Tools.Download(ctx, acc.Home(s.Accounts.Root), acc.KeychainPP, req.AppID, out,
+			func(p tools.DownloadProgress) { h.Progress(p.Percent, "downloading", p.Detail) })
+		if err != nil {
+			// PrepareDir made the directory before ipatool ran; a failed download
+			// must not leave it behind as a monument to a typo'd id.
+			s.Library.DiscardIfEmpty(req.AppID)
+			return nil, err
+		}
+		h.Progress(100, "reading the archive", "")
+		item, err := s.Library.Record(req.AppID, acc.Slug)
+		if err != nil {
+			return nil, err
+		}
+		return map[string]any{"item": item, "purchased": res.Purchased}, nil
+	})
+	writeJSON(w, http.StatusAccepted, map[string]any{"job": job})
 }
 
 func (s *Server) deleteLibrary(w http.ResponseWriter, r *http.Request) {

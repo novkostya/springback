@@ -2,6 +2,7 @@ package tools
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -180,5 +181,40 @@ func TestNeedsAuthCodePrompt(t *testing.T) {
 		if needsAuthCodePrompt(s) {
 			t.Errorf("false positive on %q", s)
 		}
+	}
+}
+
+// Frames captured from the real ipatool on the staging host, progress bar and all.
+func TestParseDownloadFrame(t *testing.T) {
+	p, ok := parseDownloadFrame("downloading  99% |████ | (195/197 MB, 35 MB/s)")
+	if !ok || p.Percent != 99 || p.Detail != "195/197 MB, 35 MB/s" {
+		t.Errorf("got %+v ok=%v", p, ok)
+	}
+	// The frame drawn BEFORE the content length is known. The percentage is real; the
+	// "1 B" total is not, and showing it reads as a download of nothing.
+	p, ok = parseDownloadFrame("downloading   0% |    | (0/ 1 B)")
+	if !ok || p.Percent != 0 {
+		t.Fatalf("placeholder frame: got %+v ok=%v", p, ok)
+	}
+	if p.Detail != "" {
+		t.Errorf("placeholder detail %q was passed through to the UI", p.Detail)
+	}
+	// Not progress at all.
+	if _, ok := parseDownloadFrame("INF download complete"); ok {
+		t.Error("matched a line with no percentage")
+	}
+	// A nonsense percentage must not become a bar past 100%.
+	if _, ok := parseDownloadFrame("999% |x| (1/2 MB)"); ok {
+		t.Error("accepted an out-of-range percentage")
+	}
+}
+
+func TestStripBarLeavesTheMessage(t *testing.T) {
+	got := stripBar("downloading 99% |█████| (195/197 MB)\rERR error=\"license not found\"")
+	if strings.Contains(got, "█") {
+		t.Errorf("bar glyphs survived: %q", got)
+	}
+	if !strings.Contains(got, "license not found") {
+		t.Errorf("the message was damaged: %q", got)
 	}
 }

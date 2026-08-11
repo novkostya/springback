@@ -100,6 +100,60 @@ func parsePurchased(out string) bool {
 	return m != nil && m[1] == "true"
 }
 
+// downloadFrameRE reads one redraw of ipatool's progress bar. Captured from the real tool:
+//
+//	downloading  99% |███████...███ | (195/197 MB, 35 MB/s)
+//
+// The percentage and the parenthesised detail are taken; the bar glyphs between them are
+// thousands of block characters and are skipped rather than matched.
+var downloadFrameRE = regexp.MustCompile(`(\d{1,3})%.*?\(([^)]*)\)`)
+
+// percentOnlyRE is the fallback for a frame that has not drawn its detail yet.
+var percentOnlyRE = regexp.MustCompile(`(\d{1,3})%`)
+
+// placeholderDetailRE matches the "0/ 1 B" frame ipatool emits before it learns the real size.
+var placeholderDetailRE = regexp.MustCompile(`^\d+/\s*[01]\s*B\b`)
+
+func parseDownloadFrame(frame string) (DownloadProgress, bool) {
+	if !strings.Contains(frame, "%") {
+		return DownloadProgress{}, false
+	}
+	if m := downloadFrameRE.FindStringSubmatch(frame); m != nil {
+		p, err := strconv.Atoi(m[1])
+		if err != nil || p > 100 {
+			return DownloadProgress{}, false
+		}
+		detail := strings.TrimSpace(m[2])
+		// ipatool draws one frame BEFORE it knows the content length, and that frame reads
+		// "0/ 1 B" — a one-byte total. Shown to the user it looks like a download of
+		// nothing, so the percentage is kept and the nonsense detail is dropped; the next
+		// frame carries the real figures.
+		if placeholderDetailRE.MatchString(detail) {
+			return DownloadProgress{Percent: p}, true
+		}
+		return DownloadProgress{Percent: p, Detail: detail}, true
+	}
+	if m := percentOnlyRE.FindStringSubmatch(frame); m != nil {
+		p, err := strconv.Atoi(m[1])
+		if err != nil || p > 100 {
+			return DownloadProgress{}, false
+		}
+		return DownloadProgress{Percent: p}, true
+	}
+	return DownloadProgress{}, false
+}
+
+// barRE matches the block glyphs a progress bar is drawn with.
+var barRE = regexp.MustCompile(`[\x{2580}-\x{259F}]+`)
+
+// stripBar removes progress-bar glyphs so an error message quoted out of the captured output is
+// a sentence rather than a wall of blocks.
+func stripBar(s string) string {
+	s = barRE.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
+}
+
 // classify maps a tool's own words onto the SPEC §7 failure modes.
 //
 // Substring matching over stderr is a fragile contract with an upstream that never promised it,

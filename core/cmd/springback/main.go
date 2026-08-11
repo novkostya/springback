@@ -15,6 +15,7 @@ import (
 
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/httpapi"
+	"github.com/novkostya/springback/core/internal/jobs"
 	"github.com/novkostya/springback/core/internal/store"
 	"github.com/novkostya/springback/core/internal/storefront"
 	"github.com/novkostya/springback/core/internal/tools"
@@ -80,6 +81,7 @@ func main() {
 	library := store.NewLibrary(*libraryDir)
 	accounts := store.NewAccounts(*accountsDir)
 	resolver := storefront.NewResolver(t, *cacheTTL, store.NewStatusCache(*libraryDir))
+	jobRegistry := jobs.NewRegistry()
 
 	srv := &httpapi.Server{
 		Tools:    t,
@@ -87,6 +89,7 @@ func main() {
 		Library:  library,
 		Accounts: accounts,
 		Resolver: resolver,
+		Jobs:     jobRegistry,
 		Log:      log,
 		Fake:     *fake,
 	}

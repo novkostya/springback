@@ -250,7 +250,7 @@ func (f *Fake) AuthInfo(ctx context.Context, home, passphrase string) (Account, 
 // iTunesMetadata.plist at the archive root, both XML plists. The library layer reads its
 // meta.json out of the archive rather than trusting what the user typed (SPEC §4), so a fake
 // that returned an empty file would leave that whole path untested on this box.
-func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int64, outPath string) (DownloadResult, error) {
+func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int64, outPath string, onProgress func(DownloadProgress)) (DownloadResult, error) {
 	f.mu.Lock()
 	_, ok := f.authed[home]
 	bundle, name := f.bundleForIDLocked(appID)
@@ -260,6 +260,24 @@ func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int6
 	}
 	if appID <= 0 {
 		return DownloadResult{}, ErrAppNotFound
+	}
+
+	// Progress, paced like a real download, so the progress UI can be built and watched on a
+	// box with no Apple ID. The byte figures track a plausible ~200 MB app at ~35 MB/s — the
+	// rate measured off the real tool.
+	if onProgress != nil {
+		const totalMB = 197
+		for pct := 0; pct <= 100; pct += 4 {
+			select {
+			case <-ctx.Done():
+				return DownloadResult{}, ctx.Err()
+			case <-time.After(120 * time.Millisecond):
+			}
+			onProgress(DownloadProgress{
+				Percent: pct,
+				Detail:  fmt.Sprintf("%d/%d MB, 35 MB/s", totalMB*pct/100, totalMB),
+			})
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {

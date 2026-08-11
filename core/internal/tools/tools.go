@@ -103,6 +103,16 @@ type InstallProgress struct {
 	Percent int
 }
 
+// DownloadProgress is one parsed frame of ipatool's progress bar.
+//
+// Detail is the tool's own byte/rate text ("195/197 MB, 35 MB/s"), passed through rather than
+// re-derived: ipatool already knows the units it is using, and re-computing them here would be a
+// second opinion that can disagree with the bar the user is watching.
+type DownloadProgress struct {
+	Percent int
+	Detail  string
+}
+
 // The failure modes of SPEC §7, as values. They are classified here, at the seam, because the
 // raw strings are the vocabulary of four different tools and nothing above this package should
 // have to know them. Each one maps to a different thing for the user to DO, which is the whole
@@ -153,8 +163,8 @@ type Tools interface {
 	AuthInfo(ctx context.Context, home, passphrase string) (Account, error)
 	// Download fetches an owned app BY NUMERIC ID. Never by bundle id: -b searches the store,
 	// and a delisted app is not in search, so -b fails for exactly the apps springback exists
-	// to fetch (SPEC §3, measured both ways).
-	Download(ctx context.Context, home, passphrase string, appID int64, outPath string) (DownloadResult, error)
+	// to fetch (SPEC §3, measured both ways). onProgress may be nil.
+	Download(ctx context.Context, home, passphrase string, appID int64, outPath string, onProgress func(DownloadProgress)) (DownloadResult, error)
 
 	// Lookup asks one storefront about one bundle id.
 	Lookup(ctx context.Context, bundleID, country string) StoreLookup
