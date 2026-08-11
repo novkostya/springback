@@ -276,6 +276,19 @@ p.screen-hint { color: var(--dim); font-size: 12.5px; margin: 0 0 14px; }
 form.stack { display: flex; flex-direction: column; gap: 12px; }
 label { display: block; font-size: 12px; color: var(--dim); }
 
+/* `label { display: block }` OUTRANKS THE HTML `hidden` ATTRIBUTE, and that is a bug I shipped.
+   `hidden` works only through the user-agent stylesheet's `[hidden] { display: none }`, which any
+   author rule for the same element beats. So the verification-code field — a <label> marked
+   hidden — was visible from the moment the page loaded, asking for a 2FA code before a password
+   had even been typed.
+
+   It very likely also broke Safari's keychain autofill, which was the other half of the report: a
+   form showing username + password + one-time-code all at once is not a login form to a password
+   manager, it is a verification form, so the saved password was never offered.
+
+   Restated globally with !important so no future element rule can quietly defeat `hidden` again. */
+[hidden] { display: none !important; }
+
 /* 16px ON PHONES, 13px FROM 640px UP — and the 16px is load-bearing, not a style preference.
 
    iOS Safari zooms the whole page in when a focused control computes below 16px: WebKit's target

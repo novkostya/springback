@@ -523,6 +523,15 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadGateway, "install_incomplete", err.Error())
 	case errors.Is(err, tools.ErrNeeds2FA):
 		writeErr(w, http.StatusConflict, "needs_2fa", "A verification code is required.")
+	case errors.Is(err, tools.ErrAppleRejected):
+		// 502: the failure is upstream, not in the request. Saying so matters, because the
+		// natural reading of a failed sign-in is "I typed something wrong" and the user will
+		// otherwise retype a correct password until Apple rate-limits them for it.
+		writeErr(w, http.StatusBadGateway, "apple_rejected",
+			"Apple refused the request — it answered with an empty response rather than a login result. "+
+				"This is Apple blocking the unofficial client, not a wrong password: it is a known, currently "+
+				"unfixed ipatool problem (issue #513) and the error changes between attempts. Wait a few minutes "+
+				"and try again; retrying immediately tends to make it worse.")
 	default:
 		s.Log.Error("request failed", "err", err)
 		writeErr(w, http.StatusInternalServerError, "error", err.Error())

@@ -133,6 +133,16 @@ var (
 	ErrDeviceUnreachable = errors.New("device not reachable")
 	// ErrInstallIncomplete — the install stopped before "Install: Complete".
 	ErrInstallIncomplete = errors.New("install did not complete")
+	// ErrAppleRejected — Apple answered the Store API with something ipatool could not use:
+	// an HTTP 204 with an empty body, a 403, a 301. NOT a wrong password, and NOT a bug in
+	// springback: it is the Store API refusing the unofficial client.
+	//
+	// Upstream ipatool issue #513 ("Apple patched out 2.3.1") reports exactly this, with the
+	// status codes fluctuating between 204/403/404/301 between attempts. It is open, and the
+	// trailing-slash fix (PR #507) is already in the pinned version — so there is nothing to
+	// upgrade to. Told apart from every other failure because the user's response is
+	// different: wait and try again, rather than check what you typed.
+	ErrAppleRejected = errors.New("apple rejected the request")
 )
 
 // Tools is the seam. Implementations: Real, Fake.

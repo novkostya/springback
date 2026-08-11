@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -57,5 +58,31 @@ func TestScrubSecretIgnoresVeryShortSecrets(t *testing.T) {
 	}
 	if got := scrubSecret(out, ""); got != out {
 		t.Errorf("empty secret changed the output: %q", got)
+	}
+}
+
+// Apple answering the Store API with something unusable is NOT a wrong password, and must not be
+// reported as one. Taken verbatim from a real failed sign-in and from upstream issue #513.
+func TestClassifyAppleRejection(t *testing.T) {
+	out := `INF enter password: ERR error="request failed: unexpected response from Apple (HTTP 204): empty or non-plist body" success=false`
+	if got := classify(out, nil); !errors.Is(got, ErrAppleRejected) {
+		t.Fatalf("classify = %v, want ErrAppleRejected", got)
+	}
+	// The status code fluctuates between attempts (#513 reports 204/403/404/301), so the
+	// match must be on the shape of the message rather than on one number.
+	for _, s := range []string{
+		`ERR error="request failed: unexpected response from Apple (HTTP 403): 403 Forbidden"`,
+		`ERR error="request failed: unexpected response from Apple (HTTP 301): 301 Moved Permanently"`,
+	} {
+		if got := classify(s, nil); !errors.Is(got, ErrAppleRejected) {
+			t.Errorf("classify(%q) = %v, want ErrAppleRejected", s, got)
+		}
+	}
+	// The specific failures must still win — this catch-all must not swallow them.
+	if got := classify(`ERR error="license not found" success=false`, nil); !errors.Is(got, ErrLicenseNotFound) {
+		t.Errorf("license error was swallowed by the Apple catch-all: %v", got)
+	}
+	if got := classify(`ERR error="2FA code is required"`, nil); !errors.Is(got, ErrNeeds2FA) {
+		t.Errorf("2FA prompt was swallowed by the Apple catch-all: %v", got)
 	}
 }

@@ -58,7 +58,9 @@
       The verification-code field is present from the start and merely revealed, so even that
       does not restructure the form.
     -->
-    <form id="signin" class="stack" method="post" action="#">
+    <!-- No method/action: the handler always preventDefault()s, and a form that COULD navigate
+         is one script error away from reloading the page with the password in a query string. -->
+    <form id="signin" class="stack">
       <label for="acc-email">Apple ID email
         <input type="email" id="acc-email" name="username" autocomplete="username"
                autocapitalize="none" autocorrect="off" spellcheck="false" required>

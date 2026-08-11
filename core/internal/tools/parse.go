@@ -173,6 +173,11 @@ func classify(out string, fallback error) error {
 		return ErrNotAuthenticated
 	case containsAny(l, "could not connect", "no device found", "device not found"):
 		return ErrDeviceUnreachable
+	// Checked LAST among the auth cases, so a genuine "license not found" or a 2FA prompt is
+	// never swallowed by it: those are specific, this is the catch-all for Apple answering
+	// with something the client cannot parse at all.
+	case containsAny(l, "unexpected response from apple", "empty or non-plist body"):
+		return ErrAppleRejected
 	}
 	return fallback
 }
