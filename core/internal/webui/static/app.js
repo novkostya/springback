@@ -423,11 +423,11 @@ function renderAppDetail() {
                 ? `Bought with ${owner}, which is signed in here.`
                 : `Bought with ${owner} — that Apple ID is not signed in, so the download will fail with "license not found".`)
             : "springback never buys anything: if the account does not already own this, the download fails." }),
-        accountPicker(match && match.slug),
+        accountPicker(match && match.slug, `archive:${appID}`),
         (() => {
           const b = el("button", { className: "primary wide", textContent: "Archive to library" });
           b.disabled = !accounts.length;
-          b.onclick = () => archive(appID, pickedAccount(match && match.slug), title, b);
+          b.onclick = () => archive(appID, pickedAccount(match && match.slug, `archive:${appID}`), title, b);
           return b;
         })(),
       ]));
@@ -438,14 +438,14 @@ function renderAppDetail() {
         el("label", { textContent: "App Store id, if you know it" }, [
           el("input", { type: "number", id: "manual-appid", min: "1", placeholder: "123456789" }),
         ]),
-        accountPicker(null),
+        accountPicker(null, `manual:${(a && a.bundle_id) || "x"}`),
         (() => {
           const b = el("button", { className: "primary wide", textContent: "Archive to library" });
           b.disabled = !accounts.length;
           b.onclick = () => {
             const id = parseInt($("#manual-appid").value, 10);
             if (!id) { toast("A numeric App Store id is required.", true); return; }
-            archive(id, pickedAccount(null), title, b);
+            archive(id, pickedAccount(null, `manual:${(a && a.bundle_id) || "x"}`), title, b);
           };
           return b;
         })(),
@@ -487,7 +487,7 @@ function renderAppDetail() {
         ]),
         (() => {
           const b = el("button", { className: "primary wide", textContent: `Update to ${storeVersion}` });
-          b.onclick = () => archive(item.id, pickedAccount(updateWith), item.name, b);
+          b.onclick = () => archive(item.id, pickedAccount(updateWith, `update:${item.id}`), item.name, b);
           return b;
         })(),
       );
@@ -500,12 +500,12 @@ function renderAppDetail() {
               "storefront here avoids the App Store's prompt for the owning Apple ID's password." }),
         (() => {
           const b = el("button", { className: "danger wide", textContent: "Re-download latest" });
-          b.onclick = () => archive(item.id, pickedAccount(updateWith), item.name, b);
+          b.onclick = () => archive(item.id, pickedAccount(updateWith, `update:${item.id}`), item.name, b);
           return b;
         })(),
       );
     }
-    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(updateWith), upd);
+    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(updateWith, `update:${item.id}`), upd);
   }
 
   // --- install, as a LIST OF DEVICES with one tap each ---
@@ -683,7 +683,26 @@ function loadInstalledSets() {
 // belongs to exactly one account, and picking any other produces "license not found". Preselected
 // rather than forced, because a family-shared or re-purchased app can legitimately be fetched
 // with a different Apple ID.
-function accountPicker(preferredSlug) {
+// accountChoice remembers a picker the user has changed BY HAND, and which app they changed it
+// for.
+//
+// THE DEFAULT IS ONLY A DEFAULT. This screen is rebuilt from scratch by anything that refreshes
+// it — the job poll every second, the device poll, and the two lookups this screen fires on open
+// that each re-render when they land — and every rebuild made a new <select> sitting on the
+// owning account again. So choosing a different Apple ID and then tapping Re-download sent the
+// ORIGINAL one: the selection had been reverted underneath, usually before the tap. Reported as
+// "it selects another account automatically", which is exactly what it did.
+//
+// Scoped to one app, so moving to a different app does not inherit a choice made for this one —
+// and only an explicit change is remembered, so the recorded owner still wins by default.
+let accountChoice = { key: null, slug: null };
+
+function rememberedAccount(key) {
+  if (!key || accountChoice.key !== key) return null;
+  return knownSlug(accountChoice.slug) ? accountChoice.slug : null;
+}
+
+function accountPicker(preferredSlug, key) {
   if (!accounts.length) {
     return el("p", { className: "hint", textContent: "Add an Apple ID on the Accounts screen first." });
   }
@@ -692,15 +711,16 @@ function accountPicker(preferredSlug) {
   // Only preselect an account that is still signed in. Assigning a slug with no matching
   // option leaves the select on NO option at all — a blank picker, and a download that goes
   // nowhere — which is exactly what a removed account would have produced.
-  if (knownSlug(preferredSlug)) sel.value = preferredSlug;
+  const want = rememberedAccount(key) || preferredSlug;
+  if (knownSlug(want)) sel.value = want;
+  sel.onchange = () => { accountChoice = { key: key || null, slug: sel.value }; };
   return el("label", { textContent: "Download with" }, [sel]);
 }
 
-function pickedAccount(preferredSlug) {
+function pickedAccount(preferredSlug, key) {
   const sel = $("#picked-account");
   if (sel && sel.value) return sel.value;
-  if (knownSlug(preferredSlug)) return preferredSlug;
-  return accounts[0] && accounts[0].slug;
+  return rememberedAccount(key) || (knownSlug(preferredSlug) ? preferredSlug : (accounts[0] && accounts[0].slug));
 }
 
 const knownSlug = (slug) => !!slug && accounts.some((a) => a.slug === slug);
