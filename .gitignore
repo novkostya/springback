@@ -1,9 +1,12 @@
 # Apple ID sessions and downloaded apps must never be committed.
-accounts/
-library/
+/accounts/
+/library/
 *.ipa
 
-# build
-springback
-dist/
-node_modules/
+# Build output.
+#
+# ANCHORED, and the anchor is load-bearing: a bare `springback` matches at EVERY depth, so it
+# also matched `core/cmd/springback/` and silently excluded the package containing main.go. The
+# first commit went out without it and built fine, because the Docker build has its own copy of
+# the tree — nothing surfaced the omission until a clean checkout was tried.
+/springback
