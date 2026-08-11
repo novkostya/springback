@@ -1,0 +1,9 @@
+# Apple ID sessions and downloaded apps must never be committed.
+accounts/
+library/
+*.ipa
+
+# build
+springback
+dist/
+node_modules/
