@@ -174,9 +174,10 @@ function renderApps(d, payload, body, head) {
   // What the verdict rests on, in the same breath as the verdict. "DELISTED" is a claim about
   // the world that the user is about to spend time and ~500 MB on.
   sub.textContent =
-    `Checked ${storefronts.join(", ")}. An app counts as delisted only when every one of them ` +
-    `comes back empty — an app that is simply not sold in your country is still fine. ` +
-    `A TestFlight or in-house build has no store listing either, and looks the same from here.` +
+    `Checked ${storefronts.join(", ")} plus each app's own storefront. An app counts as delisted ` +
+    `only when every one of them comes back empty — an app that is simply not sold in your ` +
+    `country is still fine.` +
+    (payload.not_listed ? ` ${payload.not_listed} never had a public listing (in-house or preinstalled) and are not counted.` : "") +
     (unknown ? ` ${unknown} could not be checked.` : "");
   summary.append(sub);
 
@@ -198,27 +199,29 @@ function renderApps(d, payload, body, head) {
 }
 
 function appRow(d, a) {
-  const status = el("span", { className: `status ${a.store_status}`, textContent: a.store_status.toUpperCase() });
+  const label = a.store_status === "not_listed" ? "not listed" : a.store_status.toUpperCase();
+  const status = el("span", { className: `status ${a.store_status}`, textContent: label });
   if (a.checked && a.checked.length) status.title = `Checked: ${a.checked.join(", ")}`;
   if (a.errors && a.errors.length) status.title = a.errors.join("\n");
 
   const actions = el("td", { className: "actions" });
   if (a.in_library) {
     actions.append(el("span", { className: "hint", textContent: "in library" }));
-  } else if (a.store_status === "delisted" || a.store_status === "unknown") {
-    // The Archive button is the whole product in one gesture (SPEC §6). For a delisted app
-    // the numeric id has to be typed once — the dialog explains why.
-    const b = el("button", { className: "action", textContent: "Archive" });
-    b.onclick = () => openArchive(a);
-    actions.append(b);
+  } else if (a.store_status === "not_listed" && !a.app_id) {
+    // Nothing to fetch and nothing wrong: no listing, no receipt.
+    actions.append(el("span", { className: "hint", textContent: "—" }));
   } else {
-    const b = el("button", { className: "action quiet", textContent: "Archive" });
+    // The Archive button is the whole product in one gesture (SPEC §6), and now it really
+    // is one: the numeric id comes off the device's own receipt, so a delisted app needs no
+    // typing either.
+    const urgent = a.store_status === "delisted" || a.store_status === "unknown";
+    const b = el("button", { className: urgent ? "action" : "action quiet", textContent: "Archive" });
     b.onclick = () => openArchive(a);
     actions.append(b);
   }
 
   return el("tr", { className: a.store_status === "delisted" ? "delisted" : "" }, [
-    el("td", { className: "name", textContent: a.name || a.bundle_id }),
+    el("td", { className: "name", textContent: a.store_name || a.name || a.bundle_id }),
     el("td", { className: "bundle", textContent: a.bundle_id }),
     el("td", { textContent: a.version || "—" }),
     el("td", {}, [status]),
@@ -232,8 +235,11 @@ function appRow(d, a) {
 
 function openArchive(a) {
   const dlg = $("#archive-dialog");
-  $("#archive-name").textContent = a.name || a.bundle_id;
+  $("#archive-name").textContent = a.store_name || a.name || a.bundle_id;
 
+  // The id comes off the device's own purchase receipt, so it is known even for an app the
+  // store no longer lists. Typing one in by hand is now the rare fallback rather than the
+  // normal path for every delisted app.
   const known = a.app_id > 0;
   $("#archive-known").hidden = !known;
   $("#archive-unknown").hidden = known;
@@ -244,6 +250,24 @@ function openArchive(a) {
   sel.replaceChildren(
     ...accounts.map((acc) => el("option", { value: acc.slug, textContent: acc.email })),
   );
+  // The receipt names the Apple ID that bought it. Pre-selecting that account is the
+  // difference between one click and a "license not found" the user has to interpret.
+  const ownerNote = $("#archive-owner");
+  if (a.owner_apple_id) {
+    const match = accounts.find((acc) => acc.email.toLowerCase() === a.owner_apple_id.toLowerCase());
+    if (match) {
+      sel.value = match.slug;
+      ownerNote.textContent = `Bought with ${a.owner_apple_id} — that account is selected below.`;
+    } else {
+      ownerNote.textContent =
+        `This app was bought with ${a.owner_apple_id}, which is not signed in here. ` +
+        `Any other account will fail with "license not found".`;
+    }
+    ownerNote.hidden = false;
+  } else {
+    ownerNote.hidden = true;
+  }
+
   const go = $("#archive-go");
   go.disabled = accounts.length === 0;
   if (accounts.length === 0) toast("Add an Apple ID on the Accounts screen first.", true);

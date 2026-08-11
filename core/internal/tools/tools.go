@@ -35,17 +35,35 @@ type Device struct {
 	Reachable bool   `json:"reachable"`
 }
 
-// InstalledApp is one row of `ideviceinstaller list --user`.
+// InstalledApp is one installed app, as the device describes it.
 //
-// There is no numeric App Store id here, and its absence is measured rather than assumed:
-// installation_proxy returns Info.plist keys plus a handful of container attributes, and
-// requesting `-a ITunesMetadata` returns nothing at all (verified against a live iPhone,
-// 2026-08-11). So a delisted app's numeric id cannot be recovered from the device, which is why
-// SPEC §4's one-time manual entry exists.
+// Everything below AppID comes from the device's own `iTunesMetadata` — the receipt iOS keeps
+// for each App Store purchase. See applist.go for how it is reached and why the spelling of the
+// attribute matters more than it should.
 type InstalledApp struct {
 	BundleID string `json:"bundle_id"`
 	Version  string `json:"version"`
 	Name     string `json:"name"`
+
+	// AppID is the numeric App Store id, straight off the device. Zero when the device has
+	// no receipt for this app — a sideloaded or developer-signed build.
+	//
+	// THIS IS WHAT MAKES "ARCHIVE" ONE GESTURE. A delisted app is in no storefront, so no
+	// lookup can name it; the receipt can, and it survives the listing being pulled.
+	AppID int64 `json:"app_id,omitempty"`
+	// StoreName is the store's name for the app, which also outlives the listing.
+	StoreName string `json:"store_name,omitempty"`
+	Artist    string `json:"artist,omitempty"`
+	// OwnerAppleID is the Apple ID that bought it. Used to download with the account that
+	// actually holds the licence instead of guessing and failing.
+	OwnerAppleID string `json:"owner_apple_id,omitempty"`
+	// Storefront is the country code the app was bought from — authoritative, and measured
+	// to differ from the device's own region.
+	Storefront   string `json:"storefront,omitempty"`
+	PurchaseDate string `json:"purchase_date,omitempty"`
+	// NotPublic marks a B2B custom app or a factory install: never a public listing, so its
+	// absence from every store is not evidence of anything.
+	NotPublic bool `json:"not_public,omitempty"`
 }
 
 // StoreLookup is one storefront's answer for one bundle id.

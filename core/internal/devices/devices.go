@@ -48,6 +48,9 @@ type DeviceApps struct {
 	Total       int      `json:"total"`
 	Delisted    int      `json:"delisted"`
 	Unknown     int      `json:"unknown"`
+	// NotListed — apps that were never public listings (B2B custom, factory installs). Counted
+	// separately so they cannot inflate the number the whole screen is about.
+	NotListed int `json:"not_listed"`
 }
 
 // List returns every device this host is paired with, reachable or not.
@@ -151,11 +154,31 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 		wg.Add(1)
 		go func(i int, ia tools.InstalledApp) {
 			defer wg.Done()
-			res := s.Resolver.Resolve(ctx, ia.BundleID, fronts)
-			a := App{InstalledApp: ia, Status: res.Status, Checked: res.Checked, Errors: res.Errors, AppID: res.TrackID}
-			// The library is the second source of a numeric id, and the one that
-			// makes SPEC §4's manual entry a ONE-TIME cost: an app archived from one
-			// device is a one-click archive on the next, delisted or not.
+
+			// Query the storefront the app's own receipt names, on top of the floor.
+			// The receipt is authoritative about where the app came from; the device's
+			// region is not.
+			appFronts := storefront.ForApp(dev.Region, ia.Storefront)
+
+			a := App{InstalledApp: ia, AppID: ia.AppID}
+
+			// A B2B custom app or a factory install was never a public listing, so
+			// asking every storefront about it would produce a confident DELISTED for
+			// an app that was never on sale. Answer the question that was actually
+			// asked instead of the one the lookup can answer.
+			if ia.NotPublic {
+				a.Status = storefront.NotListed
+				apps[i] = a
+				return
+			}
+
+			res := s.Resolver.Resolve(ctx, ia.BundleID, appFronts)
+			a.Status, a.Checked, a.Errors = res.Status, res.Checked, res.Errors
+			// The receipt's id wins: it is the id of the app INSTALLED HERE. A
+			// storefront match is a good cross-check but can name a different edition.
+			if a.AppID == 0 {
+				a.AppID = res.TrackID
+			}
 			if id, ok := inLibrary[ia.BundleID]; ok {
 				a.InLibrary = true
 				if a.AppID == 0 {
@@ -174,6 +197,8 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 			out.Delisted++
 		case storefront.Unknown:
 			out.Unknown++
+		case storefront.NotListed:
+			out.NotListed++
 		}
 	}
 

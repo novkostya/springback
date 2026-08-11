@@ -137,10 +137,38 @@ func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error
 	return strings.TrimSpace(out), nil
 }
 
+// ListApps returns the user apps, asking for the purchase receipt alongside the bundle info.
+//
+// `-a iTunesMetadata` is the whole reason this is an XML call rather than the simple CSV one:
+// the receipt carries the numeric App Store id, and without it a delisted app has to have its id
+// typed in by hand. See applist.go.
+//
+// THE CSV PATH REMAINS AS A FALLBACK, deliberately. The attribute request is the more elaborate
+// call and it is the one that could fail on an older device or a future ideviceinstaller — and
+// if it does, the right outcome is a Devices screen that still lists apps and merely asks for an
+// id, not an empty screen. Degrading beats disappearing.
 func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error) {
-	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinstaller", "-n", "-u", udid, "list", "--user")
-	if err != nil {
-		return nil, err
+	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "",
+		"ideviceinstaller", "-n", "-u", udid, "list", "--user", "--xml",
+		"-a", "CFBundleIdentifier",
+		"-a", "CFBundleShortVersionString",
+		"-a", "CFBundleDisplayName",
+		"-a", "CFBundleName",
+		"-a", "iTunesMetadata")
+	if err == nil {
+		if apps := parseAppListXML(out); len(apps) > 0 {
+			return apps, nil
+		}
+	}
+
+	out, csvErr := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinstaller", "-n", "-u", udid, "list", "--user")
+	if csvErr != nil {
+		// Report the FIRST failure if there was one: it is the call that was supposed to
+		// work, and its error is the one that explains the device.
+		if err != nil {
+			return nil, err
+		}
+		return nil, csvErr
 	}
 	return parseAppList(out), nil
 }

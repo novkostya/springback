@@ -32,23 +32,29 @@ const (
 	// Delisted — every storefront that ANSWERED said no, and enough of them answered.
 	//
 	// WHAT THIS ACTUALLY MEANS, precisely: no App Store listing was found for that bundle id
-	// in any queried storefront. The usual cause is the one springback exists for — the app
-	// was pulled. But an app that was NEVER a store listing under that bundle id (a TestFlight
-	// build, an enterprise or developer-signed app) is indistinguishable from a pulled one,
-	// and the device cannot settle it: measured on a live iPhone 2026-08-11, every installed
-	// app reports the same SignerIdentity ("Apple iPhone OS Application Signing") and
-	// ApplicationType ("User") whatever its origin, and installation_proxy exposes no
-	// store-provenance attribute at all.
+	// in any queried storefront, for an app the device holds a purchase receipt for.
 	//
-	// So the verdict is reported, and the UI says what it rests on rather than overclaiming.
-	// Archiving is the user's call either way, and for a never-listed app it simply fails at
-	// download with "app not found" — a cheap, self-correcting wrong guess.
+	// The receipt is what makes that a strong claim rather than a guess. An app with no
+	// receipt is not judged at all, and one whose receipt marks it B2B or factory-installed
+	// is NotListed — so the two ways an app can be "in no store" without ever having been
+	// pulled are both handled before this verdict is reached.
+	//
+	// The remaining gap, stated because it is real: a TestFlight build carries a receipt like
+	// any other, so a beta of an app that has no public listing under the same bundle id
+	// still lands here. The device does not distinguish it — measured 2026-08-11, every
+	// installed app reports the same SignerIdentity and ApplicationType whatever its origin.
 	Delisted Status = "delisted"
 	// Unknown — not enough storefronts answered to say either way. This is a real answer,
 	// not a placeholder: a network blip must degrade to "unknown", never to "delisted",
 	// because the second one invites the user to spend half an hour archiving an app that
 	// was never at risk.
 	Unknown Status = "unknown"
+	// NotListed — never a public App Store listing, so "not in any store" is the expected
+	// answer rather than a finding. A B2B custom app or a factory install, per the device's
+	// own receipt. Distinguished from Delisted because the user can do nothing about it and
+	// there is nothing wrong: reporting it as at-risk is noise in the one list that must be
+	// all signal.
+	NotListed Status = "not_listed"
 )
 
 // minCheckedForDelisted is how many storefronts must actually answer before an all-zero result
@@ -67,9 +73,10 @@ const minCheckedForDelisted = 2
 // asked is the difference between a verdict and an assertion.
 type Result struct {
 	Status Status `json:"status"`
-	// TrackID is the numeric App Store id, when a storefront gave one up. For a delisted app
-	// it is 0 by definition — no storefront has it — which is why archiving one needs the
-	// numeric id typed in once (SPEC §4).
+	// TrackID is the numeric App Store id, when a storefront gave one up. It is 0 for a
+	// delisted app by definition — no storefront has it. That used to mean the id had to be
+	// typed in by hand (SPEC §4); it no longer does, because the device's own purchase
+	// receipt carries the id whether or not the listing still exists. See tools/applist.go.
 	TrackID int64    `json:"track_id,omitempty"`
 	Checked []string `json:"checked"`
 	Errors  []string `json:"errors,omitempty"`
@@ -135,11 +142,33 @@ var appleRegion = map[string]string{
 // it can be mapped. An unmappable code is dropped rather than guessed at: the query would come
 // back 400 and contribute nothing but a scary-looking error next to every app.
 func Storefronts(deviceRegion string) []string {
-	fronts := []string{"us", "ru"}
-	if cc := RegionToStorefront(deviceRegion); cc != "" && cc != "us" && cc != "ru" {
-		fronts = append(fronts, cc)
+	return withStorefront([]string{"us", "ru"}, RegionToStorefront(deviceRegion))
+}
+
+// ForApp returns the storefronts to query for one app, given the storefront the device's own
+// purchase receipt says it came from.
+//
+// THE RECEIPT BEATS THE REGION, and the difference is measured rather than theoretical: the
+// staging iPhone reports RegionInfo "AE/A", while every app on it was bought from `ru`. Region
+// is where the hardware was sold; the storefront is where the app was. Asking the wrong one is
+// how an app that is alive and well in its own store gets reported as gone.
+//
+// The us/ru floor is kept underneath it, so this only ever ADDS evidence.
+func ForApp(deviceRegion, appStorefront string) []string {
+	fronts := Storefronts(deviceRegion)
+	return withStorefront(fronts, strings.ToLower(strings.TrimSpace(appStorefront)))
+}
+
+func withStorefront(fronts []string, cc string) []string {
+	if cc == "" {
+		return fronts
 	}
-	return fronts
+	for _, f := range fronts {
+		if f == cc {
+			return fronts
+		}
+	}
+	return append(fronts, cc)
 }
 
 // RegionToStorefront maps a raw RegionInfo value ("AE/A") to a storefront ("ae"). It returns ""

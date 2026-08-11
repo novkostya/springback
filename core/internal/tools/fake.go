@@ -54,6 +54,9 @@ type fakeDevice struct {
 func NewFake() *Fake {
 	const iphone = "00008140-000269063E88801C"
 	const ipad = "00008120-000C1DDE20614932"
+	// The Apple ID every receipt on the staging device names. A placeholder here, since the
+	// fake is what runs on a shared dev box.
+	const owner = "owner@example.com"
 
 	f := &Fake{
 		devices: map[string]*fakeDevice{
@@ -71,21 +74,47 @@ func NewFake() *Fake {
 			}, false},
 		},
 		apps: map[string][]InstalledApp{
+			// The ids, owners and storefronts below are real, read off the staging
+			// iPhone's own purchase receipts. The delisted ones carry ids too — that is
+			// the whole point: the receipt outlives the listing, so Archive never has to
+			// ask for a number.
+			//
+			// storefront `ru` on an `AE/A` device is not a typo. It is the measurement
+			// that says the receipt beats the region.
 			iphone: {
-				{BundleID: "ru.aviasales.app", Version: "9.28", Name: "Aviasales"},
-				{BundleID: "ru.yandex.mobile.music", Version: "797", Name: "Yandex Music"},
-				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital"},
-				{BundleID: "com.assetsonline.ios", Version: "2.1", Name: "Assets Online"},
-				{BundleID: "io.wio.retail", Version: "1.69.0", Name: "Wio Personal"},
-				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube"},
-				{BundleID: "com.tinyspeck.chatlyio", Version: "26.08.10", Name: "Slack"},
-				{BundleID: "ru.cardsmobile.wallet", Version: "6.63", Name: "Кошелёк"},
-				{BundleID: "com.flydubai.app.booking", Version: "6.8.29", Name: "flydubai"},
-				{BundleID: "info.tapestry.journal", Version: "5.2.1", Name: "Tapestry"},
+				{BundleID: "ru.aviasales.app", Version: "9.28", Name: "Aviasales",
+					AppID: 358848275, StoreName: "Aviasales", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "ru.yandex.mobile.music", Version: "797", Name: "Yandex Music",
+					AppID: 599981012, StoreName: "Яндекс Музыка", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital",
+					AppID: 6744684419, StoreName: "Office-Capital", Artist: "Yauheni Pazniak", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.assetsonline.ios", Version: "2.1", Name: "Assets Online",
+					AppID: 6742457200, StoreName: "Аssets Оnline", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "io.wio.retail", Version: "1.69.0", Name: "Wio Personal",
+					AppID: 1592748917, StoreName: "Wio Personal", OwnerAppleID: owner, Storefront: "ae"},
+				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
+					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.tinyspeck.chatlyio", Version: "26.08.10", Name: "Slack",
+					AppID: 618783545, StoreName: "Slack", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "ru.cardsmobile.wallet", Version: "6.63", Name: "Кошелёк",
+					AppID: 921320737, StoreName: "Кошелёк", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.flydubai.app.booking", Version: "6.8.29", Name: "flydubai",
+					AppID: 1013889784, StoreName: "flydubai", OwnerAppleID: owner, Storefront: "ae"},
+				{BundleID: "info.tapestry.journal", Version: "5.2.1", Name: "Tapestry",
+					AppID: 1442916401, StoreName: "Tapestry Journal", OwnerAppleID: owner, Storefront: "ru"},
+				// A B2B custom app: never a public listing, so it must be reported as
+				// not_listed rather than counted among the apps at risk.
+				{BundleID: "com.acme.internal.fieldtool", Version: "3.2", Name: "Field Tool",
+					AppID: 1500000001, StoreName: "Acme Field Tool", OwnerAppleID: owner, Storefront: "ae", NotPublic: true},
+				// No receipt at all — a developer-signed build. Nothing to archive, and
+				// nothing to accuse it of.
+				{BundleID: "com.example.sideloaded", Version: "0.9", Name: "Sideloaded Thing"},
 			},
 			ipad: {
-				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube"},
-				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital"},
+				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
+					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital",
+					AppID: 6744684419, StoreName: "Office-Capital", OwnerAppleID: owner, Storefront: "ru"},
 			},
 		},
 		store: map[string]map[string]int64{

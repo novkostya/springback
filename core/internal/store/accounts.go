@@ -121,38 +121,45 @@ func (s *Accounts) Get(slug string) (Account, error) {
 }
 
 // Create records a new account and returns it, with a freshly generated keychain passphrase.
-// The record is written BEFORE any login attempt: the passphrase has to be stable across the
-// two calls a 2FA login takes, and a login that gets as far as "needs a code" must not lose it.
-func (s *Accounts) Create(email string) (Account, error) {
+//
+// The record is written BEFORE the login is attempted, because the passphrase has to be stable
+// across the two calls a 2FA login takes and a login that gets as far as "needs a code" must not
+// lose it. The cost of that ordering is that a login which then FAILS leaves a record behind for
+// an Apple ID that was never signed in — reported from the UI, where a failed sign-in still added
+// a row. `existed` is what lets the caller undo it: false means this call created the record, so
+// rolling it back is safe; true means it was already there and must be left alone, since a failed
+// re-authentication of a working account must not delete the account.
+func (s *Accounts) Create(email string) (acc Account, existed bool, err error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	accs, err := s.loadLocked()
 	if err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
 	slug := slugify(email)
 	for _, a := range accs {
 		if a.Slug == slug {
 			// Re-adding an existing address reuses the record rather than making a
 			// second one: the HOME directory, and therefore the session, is keyed by
-			// slug, so a duplicate would be two names for one login.
-			return a, nil
+			// slug, so a duplicate would be two names for one login. This is also how
+			// an expired session is renewed — same slug, same passphrase, same HOME.
+			return a, true, nil
 		}
 	}
 
 	pp, err := randomPassphrase()
 	if err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
-	acc := Account{Slug: slug, Email: email, KeychainPP: pp, AddedAt: time.Now().UTC()}
+	acc = Account{Slug: slug, Email: email, KeychainPP: pp, AddedAt: time.Now().UTC()}
 	if err := os.MkdirAll(acc.Home(s.Root), 0o700); err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
 	if err := s.saveLocked(append(accs, acc)); err != nil {
-		return Account{}, err
+		return Account{}, false, err
 	}
-	return acc, nil
+	return acc, false, nil
 }
 
 // SetName records the display name ipatool reported after a successful login.

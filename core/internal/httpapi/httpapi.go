@@ -268,13 +268,28 @@ func (s *Server) addAccount(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "missing", "Email and password are both required.")
 		return
 	}
-	acc, err := s.Accounts.Create(req.Email)
+	acc, existed, err := s.Accounts.Create(req.Email)
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
 
 	err = s.Tools.AuthLogin(r.Context(), acc.Home(s.Accounts.Root), acc.KeychainPP, req.Email, req.Password, "")
+
+	// A FAILED SIGN-IN MUST NOT LEAVE AN ACCOUNT BEHIND. Reported from the UI: a login that
+	// failed still added a row, so the Accounts screen listed an Apple ID that had never been
+	// signed in and offered it in every download picker.
+	//
+	// Rolled back only when THIS call created the record. An existing account keeps its row —
+	// a failed re-authentication is a session problem, and deleting the account over it would
+	// throw away the stored passphrase and read as data loss. ErrNeeds2FA is not a failure at
+	// all: the record is exactly what the second call needs.
+	if err != nil && !errors.Is(err, tools.ErrNeeds2FA) && !existed {
+		if delErr := s.Accounts.Delete(acc.Slug); delErr != nil {
+			s.Log.Error("could not roll back a failed sign-in", "slug", acc.Slug, "err", delErr)
+		}
+	}
+
 	if errors.Is(err, tools.ErrNeeds2FA) {
 		// 409 needs_2fa, per SPEC §5. The record already exists, so the second call needs
 		// only the slug and the code — and, crucially, NOT the password again: springback
