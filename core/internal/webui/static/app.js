@@ -343,13 +343,26 @@ function renderAppDetail() {
     fact("With account", emailForSlug(item.account_slug));
   }
 
+  // BACK LIVES ON THE SCREEN, NOT IN THE HEADER. In the header it had to either take space on
+  // every screen or be added and removed, and the second reflowed the title by 54px on every
+  // navigation. Here it belongs to the thing it goes back from, names where it goes, and the
+  // header never changes at all.
+  const backLabel = parentTab() === "library" ? "Library" : "Devices";
+  const back = el("button", { className: "detail-back", type: "button" }, [`‹ ${backLabel}`]);
+  back.onclick = () => {
+    // history.back() when there IS somewhere to go back to, so the entry is popped rather than
+    // a duplicate pushed. On a cold deep link there is not, and going to the list is right.
+    if (history.length > 1) history.back();
+    else navigate(parentTab() === "library" ? "/library" : "/");
+  };
+
   const head = el("div", { className: "detail-head" }, [
     el("h2", { className: "screen", textContent: title }),
     a ? el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }) : null,
     item ? el("span", { className: "badge library", textContent: "in library" }) : null,
   ]);
 
-  const blocks = [head, el("dl", { className: "facts" }, facts)];
+  const blocks = [back, head, el("dl", { className: "facts" }, facts)];
 
   if (a && a.store_status === "delisted") {
     blocks.push(el("p", { className: "note warn-note" }, [
@@ -757,17 +770,25 @@ async function renderRoute(url, { traverse = false } = {}) {
   if (!traverse || root.childElementCount === 0) renderScreen(route.screen);
 }
 
+// THE HEADER IS NOW INVARIANT. Nothing in it changes between screens except which tab is
+// underlined, and even that no longer blinks out: a detail screen keeps the tab it came from
+// lit. Previously "app" matched no tab, so the underline VANISHED on every push and returned on
+// every pop — a change in the top bar at exactly the moment a flicker was being reported. The
+// back arrow has left the header entirely and now lives on the detail screen itself.
 function showScreen(screen) {
   current = screen;
+  const lit = screen === "app" ? parentTab() : screen;
   for (const b of document.querySelectorAll("nav a")) {
-    b.classList.toggle("active", b.dataset.screen === screen);
+    b.classList.toggle("active", b.dataset.screen === lit);
   }
   for (const s of ["devices", "library", "accounts", "app"]) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
-  // Toggled by CLASS, not the hidden attribute: hidden removes it from the layout and the
-  // title jumps sideways. The space stays reserved either way.
-  $("#back").classList.toggle("hidden", screen !== "app");
+}
+
+// parentTab: a detail screen belongs to the list it was opened from.
+function parentTab() {
+  return detail && detail.item && !detail.app ? "library" : "devices";
 }
 
 function renderScreen(screen) {
@@ -826,7 +847,6 @@ if (window.navigation && typeof window.navigation.addEventListener === "function
 }
 
 // The header arrow is the same action as the swipe and the browser's back button.
-$("#back").onclick = () => history.back();
 
 
 // ---------------------------------------------------------------------------
@@ -946,7 +966,6 @@ $("#signin").addEventListener("submit", async (ev) => {
 // The header arrow is the SAME action as the swipe and the browser's back button, rather than a
 // third thing that happens to look similar. Anything else and going "back" twice by two
 // different means lands somewhere neither of them promised.
-$("#back").onclick = () => history.back();
 
 
 // AUTO-REFRESH, like quince. Devices come and go — a phone that wakes up should turn up without
