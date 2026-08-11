@@ -705,6 +705,17 @@ function pathForScreen(screen) {
   return screen === "devices" ? "/" : `/${screen}`;
 }
 
+// startAtTop puts a NEW screen at its initial position — and only a new one.
+//
+// This is not the mistake of the previous attempt, which overrode scroll on every navigation
+// including traversals. A traversal still gets nothing from us: the browser restores the offset
+// it saved. This supplies the other half, which the browser does NOT do for a same-document
+// intercepted push — measured, a detail opened from a list scrolled to 1834 stayed near the
+// bottom of its own much shorter page, so it appeared to open scrolled to the end.
+function startAtTop() {
+  window.scrollTo(0, 0);
+}
+
 // renderRoute puts the right screen on screen. `traverse` is true for back/forward, and is the
 // whole reason this takes an argument: a traversal must restore, a new navigation must build.
 async function renderRoute(url, { traverse = false } = {}) {
@@ -732,10 +743,12 @@ async function renderRoute(url, { traverse = false } = {}) {
     }
     showScreen("app");
     renderAppDetail();
+    if (!traverse) startAtTop();
     return;
   }
 
   showScreen(route.screen);
+  if (!traverse) startAtTop();
   // ON A TRAVERSAL, DO NOT REBUILD. The content is still in the document from last time, and
   // rebuilding it here would empty the screen for the duration of the gesture and refill it at
   // the end — which is the blank-swipe symptom. A screen that has never been built still has to

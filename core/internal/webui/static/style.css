@@ -53,6 +53,11 @@ header {
   top: 0;
   background: var(--bg);
   z-index: 5;
+  /* Its own compositor layer. A sticky bar that shares a layer with the content beneath it is
+     repainted whenever that content changes — which on a back-swipe is one frame of flicker
+     right where the eye is. Promoting it means the swap underneath never touches it. */
+  transform: translateZ(0);
+  will-change: transform;
 }
 .titlebar { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
@@ -91,8 +96,12 @@ main { padding: 16px; max-width: 760px; margin: 0 auto; }
 
 /* --- jobs strip ---------------------------------------------------------- */
 
-#jobs { position: sticky; top: 0; z-index: 4; }
-#jobs:not(:empty) { padding: 10px 16px 0; }
+/* AN EMPTY JOBS STRIP IS NOT A BOX. It used to be a sticky, positioned, zero-height element
+   sitting between the sticky header and the content at all times — so every navigation had two
+   stacked sticky boxes to resolve, and the header flickered for a frame on the way back.
+   Removed from the layout entirely when there is nothing in it. */
+#jobs:empty { display: none; }
+#jobs { position: sticky; top: 0; z-index: 4; padding: 10px 16px 0; }
 .job {
   background: var(--panel);
   border: 1px solid var(--line);
