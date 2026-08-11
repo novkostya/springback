@@ -1,0 +1,213 @@
+/* springback — v0.1. "Anything pretty" is out of scope (SPEC §1); this is the minimum that
+   makes 162 rows readable and the four that matter impossible to miss. */
+
+:root {
+  --bg: #12100e;
+  --panel: #1c1917;
+  --panel-2: #262220;
+  --line: #37312d;
+  --ink: #ece7e1;
+  --dim: #a09890;
+  --accent: #d98c3f;
+  --danger: #e0573e;
+  --ok: #6f8f5f;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 15px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  padding: 20px 24px 0;
+  border-bottom: 1px solid var(--line);
+}
+h1 { margin: 0; font-size: 20px; letter-spacing: -0.01em; }
+.tagline { margin: 2px 0 14px; color: var(--dim); font-size: 13px; }
+
+nav { display: flex; gap: 4px; }
+nav button {
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  padding: 8px 14px;
+  font: inherit;
+  cursor: pointer;
+}
+nav button.active { color: var(--ink); border-bottom-color: var(--accent); }
+
+main { padding: 20px 24px 60px; max-width: 1000px; }
+
+.banner {
+  margin: 12px 24px 0;
+  padding: 10px 14px;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.banner.warn { background: #3a2c14; border: 1px solid #6b4f1d; }
+
+/* --- devices ------------------------------------------------------------- */
+
+.device {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.device-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 14px 16px;
+  cursor: pointer;
+}
+.device-head h2 { margin: 0; font-size: 16px; }
+.device-head .meta { color: var(--dim); font-size: 12px; }
+.device-head .spacer { flex: 1; }
+
+.pill {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.pill.asleep { border-color: #5b4a2e; color: #c9a66b; }
+.pill.live { border-color: #40563a; color: #9dbb8a; }
+.pill.risk { border-color: #7a3427; color: #f0a08e; background: #2e1a15; }
+
+.device-body { border-top: 1px solid var(--line); padding: 0 16px 12px; }
+
+.summary {
+  padding: 12px 0;
+  font-size: 14px;
+}
+.summary strong { color: var(--accent); }
+.summary .sub { display: block; color: var(--dim); font-size: 12px; margin-top: 4px; }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th {
+  text-align: left;
+  color: var(--dim);
+  font-weight: 500;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--line);
+}
+td { padding: 7px 8px; border-bottom: 1px solid #221e1c; vertical-align: middle; }
+tr.delisted td { background: #241715; }
+td.name { font-weight: 500; }
+td.bundle { color: var(--dim); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; }
+td.actions { text-align: right; white-space: nowrap; }
+
+.status { font-size: 11px; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
+.status.delisted { background: #4a1f16; color: #ffb9a6; font-weight: 600; letter-spacing: 0.04em; }
+.status.available { background: #23301f; color: #9dbb8a; }
+.status.unknown { background: #2f2a24; color: #c0b3a2; }
+
+/* --- generic ------------------------------------------------------------- */
+
+button.primary, button.action {
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  border-radius: 6px;
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+button.primary { background: var(--accent); border-color: var(--accent); color: #1a1108; font-weight: 600; }
+button.action:hover, button.primary:hover { filter: brightness(1.12); }
+button.action.quiet { color: var(--dim); }
+button[disabled] { opacity: 0.45; cursor: default; }
+button.danger { color: var(--danger); }
+
+.empty { color: var(--dim); padding: 24px 0; }
+.hint { color: var(--dim); font-size: 12px; }
+.note {
+  background: #1d2416;
+  border: 1px solid #3b4a2e;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12.5px;
+}
+.error {
+  background: #2e1a15;
+  border: 1px solid #7a3427;
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+h2.screen { font-size: 16px; margin: 0 0 4px; }
+p.screen-hint { color: var(--dim); font-size: 12.5px; margin: 0 0 16px; }
+
+form.stack { display: flex; flex-direction: column; gap: 10px; max-width: 420px; }
+label { display: block; font-size: 12px; color: var(--dim); }
+input, select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 13px;
+}
+
+dialog {
+  background: var(--panel);
+  color: var(--ink);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  max-width: 470px;
+  padding: 20px;
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+dialog h2 { margin: 0 0 12px; font-size: 16px; }
+dialog p { font-size: 13px; }
+dialog menu { display: flex; gap: 8px; justify-content: flex-end; margin: 18px 0 0; padding: 0; }
+dialog label { margin-top: 10px; }
+
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 10px 16px;
+  font-size: 13px;
+  max-width: 600px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
+}
+#toast.bad { border-color: #7a3427; }
+
+.spinner::after {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-left: 8px;
+  border: 2px solid var(--line);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: -1px;
+}
+@keyframes spin { to { transform: rotate(360deg); } }

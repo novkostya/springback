@@ -1,0 +1,44 @@
+# springback — sibling container to quince on the same LXC (SPEC §2).
+#
+# ────────────────────────────────────────────────────────────────────────────────────────────
+# THE THREE CONSTRAINTS BELOW ARE NOT STYLE. quince on this host is live and in daily use, and
+# each line exists because getting it wrong damages quince rather than springback.
+#
+#   1. NO usbmuxd, AND NO SECOND ONE STARTED ANYWHERE. quince's container already runs one; a
+#      second fights it for the USB bus. springback never needs USB — every device call goes
+#      over netmuxd's TCP port, which is what USBMUXD_SOCKET_ADDRESS below selects. The image
+#      does not even install the package (see deploy/Dockerfile), so there is nothing here to
+#      start by accident.
+#
+#   2. THE PAIRING RECORDS ARE MOUNTED READ-ONLY. springback lists them to know which devices
+#      exist while they are asleep, and that is all it ever does with them. A day-old tool must
+#      not be able to corrupt the pairing state quince depends on — losing it means re-pairing
+#      every device by hand, with physical access to each one.
+#
+#      The SOURCE PATH IS THE HOST-SIDE OF QUINCE'S OWN DATA MOUNT, not /var/lib/lockdown on
+#      this host. quince keeps its lockdown directory inside its data volume; the host's own
+#      /var/lib/lockdown holds only a SystemConfiguration.plist and no device records, so
+#      mounting that instead yields an empty directory and a Devices screen that silently forgets
+#      every sleeping device. Verified on the staging host 2026-08-11.
+#
+#   3. HOST NETWORK, because netmuxd is bound to 127.0.0.1:27015 and a bridged container cannot
+#      reach it. That is the same reason quince runs host-network here.
+# ────────────────────────────────────────────────────────────────────────────────────────────
+
+services:
+  springback:
+    image: registry.novkostya.ru/springback:staging
+    container_name: springback
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      # Not 8968 (quince) and not 8080 (quince on this stand). Nothing else on the box binds
+      # this one.
+      SPRINGBACK_LISTEN: ":8971"
+      # Every device call needs this (SPEC §2). It is quince's netmuxd, already running.
+      USBMUXD_SOCKET_ADDRESS: "127.0.0.1:27015"
+    volumes:
+      - ./springback/library:/library # downloaded .ipa files, keyed by numeric App Store id
+      - ./springback/accounts:/accounts # ipatool HOMEs + accounts.json. Sessions live here.
+      # Pairing records, from quince's data volume. READ-ONLY — see constraint 2 above.
+      - /root/quince/data/lockdown:/var/lib/lockdown:ro

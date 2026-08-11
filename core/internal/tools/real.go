@@ -1,0 +1,361 @@
+package tools
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"os/exec"
+	"strings"
+	"time"
+)
+
+// Real shells out to the tools SPEC §3 verified, and talks to the iTunes lookup API.
+type Real struct {
+	// MuxAddr is quince's netmuxd, exported to every device call as
+	// USBMUXD_SOCKET_ADDRESS. springback never runs a muxer of its own: quince's container
+	// already runs usbmuxd, and a second daemon fights it for the USB bus (SPEC §2).
+	MuxAddr string
+	// HTTP is the client used for the lookup API only.
+	HTTP *http.Client
+	// DeviceTimeout bounds a single device command. Devices come and go; a call to a device
+	// that went to sleep mid-command must not hold an HTTP handler open forever.
+	DeviceTimeout time.Duration
+	// DownloadTimeout bounds one ipatool download. ~500 MB per app over a store CDN
+	// (SPEC §3 measured 487 MB), so this is minutes, not seconds.
+	DownloadTimeout time.Duration
+	// InstallTimeout bounds one install, which is slower than a download.
+	InstallTimeout time.Duration
+	// LockdownDir holds the pairing records, mounted READ-ONLY from quince's container
+	// (SPEC §2). springback only ever lists it.
+	LockdownDir string
+}
+
+// NewReal builds a Real with the defaults every deployment uses.
+func NewReal(muxAddr, lockdownDir string) *Real {
+	return &Real{
+		MuxAddr:         muxAddr,
+		LockdownDir:     lockdownDir,
+		HTTP:            &http.Client{Timeout: 20 * time.Second},
+		DeviceTimeout:   60 * time.Second,
+		DownloadTimeout: 30 * time.Minute,
+		InstallTimeout:  30 * time.Minute,
+	}
+}
+
+// run executes a command and returns its combined output. env entries are ADDED to a minimal
+// environment rather than inheriting the server's: the child processes here are given exactly
+// the variables they need, and nothing else the web process happens to be carrying.
+func (r *Real) run(ctx context.Context, timeout time.Duration, env []string, stdin string, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin"}, env...)
+	if stdin != "" {
+		cmd.Stdin = strings.NewReader(stdin)
+	}
+	var buf bytes.Buffer
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	err := cmd.Run()
+	out := buf.String()
+	if err != nil {
+		return out, classify(out, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(out)))
+	}
+	return out, nil
+}
+
+// deviceEnv is the one variable every device call needs (SPEC §2).
+func (r *Real) deviceEnv() []string {
+	return []string{"USBMUXD_SOCKET_ADDRESS=" + r.MuxAddr}
+}
+
+func (r *Real) ListDeviceUDIDs(ctx context.Context) ([]string, error) {
+	// -n is network-only, which is the whole transport springback has: netmuxd serves Wi-Fi
+	// devices over TCP and springback has no USB access by design.
+	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "idevice_id", "-n")
+	if err != nil {
+		// An empty list exits non-zero on some builds. Nothing on stdout plus a failure is
+		// the ordinary "everything is asleep" case, NOT an error to show the user.
+		if strings.TrimSpace(out) == "" {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var udids []string
+	for _, line := range strings.Split(out, "\n") {
+		if u := strings.TrimSpace(line); u != "" {
+			udids = append(udids, u)
+		}
+	}
+	return udids, nil
+}
+
+// PairedUDIDs lists the pairing records. Each is <udid>.plist; SystemConfiguration.plist is the
+// host's own record and names no device, so it is skipped.
+//
+// A missing or unreadable directory is NOT an error. springback runs on boxes where the mount
+// was not wired up, and the honest answer there is "no pairing records, so only devices that are
+// awake right now" — a degraded Devices screen, not a dead one.
+func (r *Real) PairedUDIDs(ctx context.Context) ([]string, error) {
+	if r.LockdownDir == "" {
+		return nil, nil
+	}
+	entries, err := os.ReadDir(r.LockdownDir)
+	if err != nil {
+		return nil, nil
+	}
+	var udids []string
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".plist") || name == "SystemConfiguration.plist" {
+			continue
+		}
+		udids = append(udids, strings.TrimSuffix(name, ".plist"))
+	}
+	return udids, nil
+}
+
+func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error) {
+	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinfo", "-n", "-u", udid, "-k", key)
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(out), nil
+}
+
+func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error) {
+	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinstaller", "-n", "-u", udid, "list", "--user")
+	if err != nil {
+		return nil, err
+	}
+	return parseAppList(out), nil
+}
+
+func (r *Real) InstallApp(ctx context.Context, udid, ipaPath string, onProgress func(InstallProgress)) error {
+	ctx, cancel := context.WithTimeout(ctx, r.InstallTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ideviceinstaller", "-n", "-u", udid, "install", ipaPath)
+	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin"}, r.deviceEnv()...)
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	cmd.Stderr = cmd.Stdout
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	var seen bytes.Buffer
+	sc := bufio.NewScanner(stdout)
+	for sc.Scan() {
+		line := sc.Text()
+		seen.WriteString(line)
+		seen.WriteByte('\n')
+		if p, ok := parseInstallLine(line); ok && onProgress != nil {
+			onProgress(p)
+		}
+	}
+	waitErr := cmd.Wait()
+
+	// THE EXIT CODE IS NOT THE SIGNAL. ideviceinstaller can stop partway and still exit 0, so
+	// success is the presence of the completion line and nothing else (SPEC §3). When it is
+	// missing, the last line names the stage that failed — so it is what the user is shown.
+	if !installComplete(seen.String()) {
+		if err := classify(seen.String(), nil); err != nil {
+			return err
+		}
+		last := lastMeaningfulLine(seen.String())
+		if waitErr != nil && last == "" {
+			return fmt.Errorf("%w: %v", ErrInstallIncomplete, waitErr)
+		}
+		return fmt.Errorf("%w: %s", ErrInstallIncomplete, last)
+	}
+	return nil
+}
+
+func lastMeaningfulLine(out string) string {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	for i := len(lines) - 1; i >= 0; i-- {
+		if l := strings.TrimSpace(lines[i]); l != "" {
+			return l
+		}
+	}
+	return ""
+}
+
+// ipatoolEnv isolates one Apple ID by HOME, which SPEC §3 measured as the isolation boundary:
+// ipatool keeps .ipatool/{account,cookies} under HOME, so one directory per Apple ID keeps
+// sessions from treading on each other.
+func ipatoolEnv(home string) []string {
+	return []string{"HOME=" + home}
+}
+
+func (r *Real) AuthLogin(ctx context.Context, home, passphrase, email, password, authCode string) error {
+	args := []string{"auth", "login", "-e", email, "--keychain-passphrase", passphrase, "--non-interactive"}
+	if authCode != "" {
+		args = append(args, "--auth-code", authCode)
+	}
+	// THE PASSWORD GOES OVER STDIN. Omitting -p makes ipatool prompt, and the prompt reads
+	// stdin — so the secret never appears in argv, where any `ps` on the box would show it,
+	// and never in a log line. It is held in memory for the length of this call only.
+	_, err := r.run(ctx, 5*time.Minute, ipatoolEnv(home), password+"\n", "ipatool", args...)
+	return err
+}
+
+func (r *Real) AuthInfo(ctx context.Context, home, passphrase string) (Account, error) {
+	out, err := r.run(ctx, r.DeviceTimeout, ipatoolEnv(home), "",
+		"ipatool", "auth", "info", "--keychain-passphrase", passphrase, "--non-interactive")
+	if err != nil {
+		return Account{}, err
+	}
+	return parseAuthInfo(out), nil
+}
+
+// parseAuthInfo pulls the identity out of ipatool's report. It accepts the JSON shape and the
+// default console shape, because which one appears depends on a global flag whose default has
+// moved between releases; matching both costs a few lines and removes a version dependency.
+func parseAuthInfo(out string) Account {
+	var acc Account
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(line, "{") {
+			var j struct {
+				Email string `json:"email"`
+				Name  string `json:"name"`
+			}
+			if json.Unmarshal([]byte(line), &j) == nil {
+				if j.Email != "" {
+					acc.Email = j.Email
+				}
+				if j.Name != "" {
+					acc.Name = j.Name
+				}
+				continue
+			}
+		}
+		if v, ok := logfmtValue(line, "email"); ok {
+			acc.Email = v
+		}
+		if v, ok := logfmtValue(line, "name"); ok {
+			acc.Name = v
+		}
+	}
+	return acc
+}
+
+// logfmtValue reads `key=value` or `key="value with spaces"` out of a console log line.
+func logfmtValue(line, key string) (string, bool) {
+	i := strings.Index(line, key+"=")
+	if i < 0 || (i > 0 && line[i-1] != ' ') {
+		return "", false
+	}
+	rest := line[i+len(key)+1:]
+	if strings.HasPrefix(rest, `"`) {
+		rest = rest[1:]
+		if j := strings.Index(rest, `"`); j >= 0 {
+			return rest[:j], true
+		}
+		return rest, true
+	}
+	if j := strings.IndexByte(rest, ' '); j >= 0 {
+		rest = rest[:j]
+	}
+	return rest, rest != ""
+}
+
+func (r *Real) Download(ctx context.Context, home, passphrase string, appID int64, outPath string) (DownloadResult, error) {
+	// -i, NOT -b. This is the single most important line in the spec: -b resolves a bundle id
+	// by SEARCHING the store, and a delisted app is not in search, so -b fails with "app not
+	// found" for exactly the apps springback exists to fetch. Measured both ways (SPEC §3).
+	//
+	// --purchase is ABSENT and must stay absent. It acquires a licence, which is a state
+	// change on someone's Apple account, and springback never makes one without the user
+	// having explicitly asked for it.
+	out, err := r.run(ctx, r.DownloadTimeout, ipatoolEnv(home), "",
+		"ipatool", "download",
+		"-i", fmt.Sprintf("%d", appID),
+		"-o", outPath,
+		"--keychain-passphrase", passphrase,
+		"--non-interactive")
+	if err != nil {
+		return DownloadResult{Output: out}, err
+	}
+	return DownloadResult{Purchased: parsePurchased(out), Path: outPath, Output: out}, nil
+}
+
+// lookupResponse is the slice of the iTunes lookup payload springback reads.
+type lookupResponse struct {
+	ResultCount int `json:"resultCount"`
+	Results     []struct {
+		TrackID   int64  `json:"trackId"`
+		TrackName string `json:"trackName"`
+		BundleID  string `json:"bundleId"`
+	} `json:"results"`
+	ErrorMessage string `json:"errorMessage"`
+}
+
+func (r *Real) Lookup(ctx context.Context, bundleID, country string) StoreLookup {
+	res := StoreLookup{Country: country}
+
+	u := "https://itunes.apple.com/lookup?" + url.Values{
+		"bundleId": {bundleID},
+		"country":  {country},
+	}.Encode()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	resp, err := r.HTTP.Do(req)
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	// A NON-200 IS "NOT CHECKED", NEVER "NOT IN THE STORE", and this is the guard that keeps
+	// the headline feature honest. An unknown storefront code answers 400 — measured against
+	// the live API on 2026-08-11 with country=ll, which is what the iPad's RegionInfo "LL/A"
+	// naively yields. Counting that as resultCount 0 would mark every app on that iPad as
+	// delisted, with the tool sounding most confident exactly where it was most wrong.
+	if resp.StatusCode != http.StatusOK {
+		res.Err = fmt.Errorf("itunes lookup %s: http %d", country, resp.StatusCode)
+		return res
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	if err != nil {
+		res.Err = err
+		return res
+	}
+	var lr lookupResponse
+	if err := json.Unmarshal(body, &lr); err != nil {
+		res.Err = fmt.Errorf("itunes lookup %s: %w", country, err)
+		return res
+	}
+	if lr.ErrorMessage != "" {
+		res.Err = fmt.Errorf("itunes lookup %s: %s", country, lr.ErrorMessage)
+		return res
+	}
+
+	res.Checked = true
+	if lr.ResultCount > 0 && len(lr.Results) > 0 {
+		res.Found = true
+		res.TrackID = lr.Results[0].TrackID
+		res.TrackName = lr.Results[0].TrackName
+	}
+	return res
+}

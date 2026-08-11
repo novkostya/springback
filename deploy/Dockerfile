@@ -1,0 +1,117 @@
+# springback — single multi-stage image. Also the source of the dev toolchain image: `make`
+# builds the `toolchain-go` stage and runs every gate inside it, so dev and this release image
+# compile with byte-identical toolchains. All pins come from versions.env via --build-arg
+# (defaults below mirror it).
+#
+# NOT a quince image and not derived from one. Shares a host and a netmuxd; shares no name, no
+# repo, no process (SPEC header). The overlap in base image and Apple userland is because both
+# talk to the same devices, not because one is built from the other.
+
+# ---- pinned base images (mirror versions.env) — ONE Alpine line (3.24) everywhere ----
+ARG GO_IMAGE=golang:1.26.5-alpine3.24
+ARG ALPINE_IMAGE=alpine:3.24
+
+# =============================================================================
+# Toolchain stage — reused verbatim by the Makefile gate targets.
+# =============================================================================
+FROM ${GO_IMAGE} AS toolchain-go
+ARG GOLANGCI_LINT_VERSION
+RUN apk add --no-cache git make gcc musl-dev
+# golangci-lint built WITH this exact Go, so no analyzer/toolchain skew. v2 module path carries
+# the /v2 suffix.
+RUN go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v${GOLANGCI_LINT_VERSION}
+WORKDIR /src
+
+# =============================================================================
+# Build stages.
+# =============================================================================
+# --- ipatool: the Apple Store client, pinned, built against musl ---
+#
+# CGO_ENABLED=1, WHICH IS NOT THE OBVIOUS CHOICE and is forced rather than preferred. ipatool
+# 2.3.2 depends on the 1Password SDK for its keyring backends, and that module fails to compile
+# with cgo off — it resolves to a stub whose only symbol is the compile error
+# `ERROR_WithDesktopAppIntegration_requires_CGO_To_Cross_Compile_See_README_CGO_Section`.
+# Measured at pin time; there is no build tag that avoids it.
+#
+# Safe here because this is a SAME-PLATFORM build, not a cross-compile: this stage and the
+# runtime stage are both Alpine 3.24/musl (versions.env keeps one Alpine line across the whole
+# image for exactly this class of reason), so the resulting dynamic link is against the musl and
+# libgcc that the runtime already has. `springback` itself stays CGO_ENABLED=0.
+FROM toolchain-go AS ipatool-build
+ARG IPATOOL_REF
+RUN CGO_ENABLED=1 go install -trimpath -ldflags "-s -w" \
+      github.com/majd/ipatool/v2@${IPATOOL_REF} \
+    && install -m0755 /go/bin/ipatool /ipatool
+
+# --- ideviceinstaller: pinned tag, built from source (Alpine 3.24 does not package it) ---
+#
+# Everything it links against IS packaged at 3.24 — libimobiledevice 1.4.0, libplist 2.6,
+# libimobiledevice-glue, libzip — so only this one repo is built. See versions.env for the
+# APKINDEX check behind that claim.
+FROM ${ALPINE_IMAGE} AS ideviceinstaller-build
+ARG IDEVICEINSTALLER_REF
+RUN apk add --no-cache git build-base autoconf automake libtool pkgconf \
+      libimobiledevice-dev libplist-dev libimobiledevice-glue-dev libzip-dev
+WORKDIR /src/ideviceinstaller
+RUN git clone --depth 1 --branch ${IDEVICEINSTALLER_REF} \
+      https://github.com/libimobiledevice/ideviceinstaller .
+# Install to a DESTDIR the runtime stage copies from. autogen.sh runs ./configure "$@" only when
+# NOCONFIGURE is unset — do not set it.
+RUN ./autogen.sh --prefix=/usr \
+    && make -j"$(nproc)" \
+    && make DESTDIR=/stage install
+
+# --- core: embed the static UI, cgo-free static binary ---
+FROM toolchain-go AS core-build
+ARG VERSION=0.0.0-dev
+WORKDIR /src/core
+COPY core/go.mod ./
+COPY core/go.sum* ./
+RUN go mod download
+COPY core/ ./
+RUN CGO_ENABLED=0 go build -trimpath \
+      -ldflags "-s -w -X github.com/novkostya/springback/core/internal/version.Version=${VERSION}" \
+      -o /springback ./cmd/springback
+
+# =============================================================================
+# Runtime — Alpine + the Apple userland springback shells out to.
+# =============================================================================
+FROM ${ALPINE_IMAGE} AS runtime
+# THERE IS NO usbmuxd HERE, AND ITS ABSENCE IS THE POINT (SPEC §2). quince's container already
+# runs one; a second daemon fights it for the USB bus. springback never touches USB — every
+# device call goes over quince's netmuxd on 127.0.0.1:27015, set by USBMUXD_SOCKET_ADDRESS.
+# Installing the package "just in case" would put a startable competitor inside the image, and
+# the failure it causes lands on quince rather than here.
+#
+#   libimobiledevice-progs = idevice_id + ideviceinfo (Alpine 3.24 ships 1.4.0). springback needs
+#                            no patched build: it reads device name/region and lists udids, none
+#                            of which quince's in-tree patches touch.
+#   libzip                 = runtime link dep of the ideviceinstaller built above.
+#   ca-certificates        = TLS for the iTunes lookup API and ipatool's Store calls.
+RUN apk add --no-cache \
+      ca-certificates tzdata \
+      libimobiledevice-progs \
+      libimobiledevice-glue \
+      libusbmuxd \
+      libplist \
+      libtatsu \
+      libzip
+
+COPY --from=ipatool-build /ipatool /usr/local/bin/ipatool
+COPY --from=ideviceinstaller-build /stage/usr/bin/ideviceinstaller /usr/local/bin/ideviceinstaller
+COPY --from=core-build /springback /usr/local/bin/springback
+
+ENV SPRINGBACK_LIBRARY=/library \
+    SPRINGBACK_ACCOUNTS=/accounts \
+    SPRINGBACK_LISTEN=:8971 \
+    USBMUXD_SOCKET_ADDRESS=127.0.0.1:27015
+
+# THE IMAGE MUST CONTAIN THE DIRECTORIES IT DECLARES — quince learned this on a deployment with
+# no mounts, where the binary died on an errno naming neither the missing directory nor the
+# variable that pointed at it. Both paths are bind-mounted in every real deployment, which is
+# exactly why the defaults would otherwise be dead config that reads as live.
+RUN mkdir -p /library /accounts
+
+EXPOSE 8971
+ENTRYPOINT ["springback"]
+CMD ["serve"]
