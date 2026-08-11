@@ -693,20 +693,8 @@ const scrollPositions = new Map(); // history key -> scrollY
 let historyKey = 0;
 let nextHistoryKey = 1;
 
-// scrollKey identifies the entry a position belongs to.
-//
-// Two schemes, because the two navigation mechanisms number entries differently and mixing them
-// silently loses every position: the Navigation API gives each entry a stable `key` of its own,
-// while the popstate path has to carry a counter in history.state. Whichever is in use must be
-// used on BOTH sides — saving under one and looking up under the other is how the first version
-// of this restored every screen to the top.
-function scrollKey() {
-  if (window.navigation && window.navigation.currentEntry) return window.navigation.currentEntry.key;
-  return historyKey;
-}
-
 function rememberScroll() {
-  scrollPositions.set(scrollKey(), window.scrollY);
+  scrollPositions.set(historyKey, window.scrollY);
 }
 
 // restoreScroll waits for layout before setting the offset. A single frame is not enough: the
@@ -716,19 +704,7 @@ function restoreScroll(y) {
   requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y || 0)));
 }
 
-// `rebuild: false` — DO NOT RE-RENDER A SCREEN YOU ARE RETURNING TO.
-//
-// This is what fixes the blank frame during the interactive back-swipe. Safari drives that
-// gesture itself and only tells us it happened, via popstate, when it has FINISHED. Everything
-// the user sees mid-swipe is whatever the document already contains. If the destination screen's
-// DOM is rebuilt in response to popstate, it is empty for the whole gesture and fills in at the
-// end — which is exactly the reported symptom.
-//
-// The screens are all in the document already, hidden rather than destroyed, so returning to one
-// is a `hidden` toggle over content that is still there. Rebuilt only when the content might be
-// wrong: the app-detail view, which shows a specific app and could otherwise display the previous
-// one. Lists refresh themselves from the pollers anyway.
-function show(screen, { path, push = true, restore = null, rebuild = true } = {}) {
+function show(screen, { path, push = true, restore = null } = {}) {
   if (push) rememberScroll();
 
   current = screen;
@@ -754,12 +730,6 @@ function show(screen, { path, push = true, restore = null, rebuild = true } = {}
     historyKey = key;
   }
 
-  // Already-populated screen being returned to: show it as it stands.
-  if (!rebuild && screen !== "app" && $(`#screen-${screen}`).childElementCount > 0) {
-    restoreScroll(restore);
-    return;
-  }
-
   // The accounts LIST is refreshed on arrival; the form is static markup and is never touched.
   if (screen === "accounts") {
     refreshAccounts().then(() => { renderAccountsList(); restoreScroll(restore); });
@@ -772,25 +742,23 @@ function show(screen, { path, push = true, restore = null, rebuild = true } = {}
 // applyRoute restores a view from a history entry — on a back/forward, or on a cold load of a
 // deep link. The state object is preferred when present; the path is the fallback, because a
 // reload arrives with no state at all.
-async function applyRoute(state, restoreOverride) {
+async function applyRoute(state) {
   const path = location.pathname;
   // The offset this entry was left at, if it has been visited before. Absent for a cold load
   // or a forward move into something new, which correctly start at the top.
-  const restore = restoreOverride != null
-    ? restoreOverride
-    : (state && state.key != null ? scrollPositions.get(state.key) : null);
+  const restore = state && state.key != null ? scrollPositions.get(state.key) : null;
   if (state && state.key != null) historyKey = state.key;
 
   if (state && state.screen && state.screen !== "app") {
-    show(state.screen, { push: false, restore, rebuild: false });
+    show(state.screen, { push: false, restore });
     return;
   }
 
   const lib = path.match(/^\/library\/(\d+)$/);
   if (lib) {
     const item = library.find((i) => String(i.id) === lib[1]);
-    if (item) { detail = { item }; show("app", { push: false, restore, rebuild: false }); return; }
-    show("library", { push: false, restore, rebuild: false });
+    if (item) { detail = { item }; show("app", { push: false, restore }); return; }
+    show("library", { push: false, restore });
     return;
   }
 
@@ -804,53 +772,19 @@ async function applyRoute(state, restoreOverride) {
     // on a view they only arrived at by going backwards.
     const payload = appsCache.get(udid);
     const app = payload && payload.apps.find((a) => a.bundle_id === bundle);
-    if (device && app) { detail = { app, device }; show("app", { push: false, restore, rebuild: false }); return; }
-    show("devices", { push: false, restore, rebuild: false });
+    if (device && app) { detail = { app, device }; show("app", { push: false, restore }); return; }
+    show("devices", { push: false, restore });
     return;
   }
 
   if (path === "/library" || path === "/accounts") {
-    show(path.slice(1), { push: false, restore, rebuild: false });
+    show(path.slice(1), { push: false, restore });
     return;
   }
-  show("devices", { push: false, restore, rebuild: false });
+  show("devices", { push: false, restore });
 }
 
-// WHY THE BACK-SWIPE IS SMOOTH ON AN ORDINARY SITE AND NOT HERE.
-//
-// google.com is many DOCUMENTS. Going back restores the previous one from the back/forward
-// cache — a whole live page the browser kept, already painted, already at the right scroll — so
-// it can composite it under your thumb as you drag. Nothing is being rebuilt; it never went away.
-//
-// This app is ONE document that swaps its own contents. There is no previous page for the
-// browser to bring back, and with plain popstate it is not even told the gesture is happening
-// until it has finished — so mid-drag there is nothing to show. That is the cost of pushState
-// routing, and it is why this is awkward in every SPA rather than something done wrong here.
-//
-// The Navigation API is the part of the platform that closes the gap: for a traversal it fires
-// BEFORE the navigation commits, and `intercept()` lets the DOM be updated as part of it, so the
-// browser can paint the destination during the gesture instead of after it. Used when present,
-// with popstate as the fallback — and only for `traverse`, because pushState navigations are
-// already handled by show() and intercepting them would render everything twice.
-if (window.navigation && typeof window.navigation.addEventListener === "function") {
-  window.navigation.addEventListener("navigate", (ev) => {
-    if (ev.navigationType !== "traverse" || !ev.canIntercept || ev.hashChange) return;
-    if (new URL(ev.destination.url).origin !== location.origin) return;
-    ev.intercept({
-      // "after-transition" would restore scroll once the browser has finished its own
-      // animation, undoing the point of intercepting at all.
-      scroll: "manual",
-      handler: async () => {
-        // destination.getState() is the NAVIGATION api's own state, which is NOT what
-        // history.pushState wrote — it comes back undefined here. The entry's `key` is
-        // the identifier that actually exists on both sides of a traversal.
-        await applyRoute(null, scrollPositions.get(ev.destination.key));
-      },
-    });
-  });
-} else {
-  window.addEventListener("popstate", (ev) => { applyRoute(ev.state); });
-}
+window.addEventListener("popstate", (ev) => { applyRoute(ev.state); });
 
 // ---------------------------------------------------------------------------
 // Accounts — list rendering only. The form lives in index.html and is wired once, below.
