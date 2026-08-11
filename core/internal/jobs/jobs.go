@@ -25,8 +25,6 @@ type Kind string
 const (
 	Download Kind = "download"
 	Install  Kind = "install"
-	// SignIn retries a login while Apple is refusing them.
-	SignIn Kind = "signin"
 )
 
 // State is where a job has got to.

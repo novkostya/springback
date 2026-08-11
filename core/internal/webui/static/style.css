@@ -442,27 +442,6 @@ main { padding-bottom: 96px; }
   color: #9dbb8a;
 }
 
-/* The opt-in for persistent sign-in: a checkbox with a real explanation under it, since it
-   changes how long the password is held and that is the user's decision to make. */
-label.check {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-  background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  padding: 12px;
-  color: var(--ink);
-  font-size: 13px;
-}
-label.check input {
-  width: auto;
-  min-height: 0;
-  margin: 2px 0 0;
-  flex-shrink: 0;
-  accent-color: var(--accent);
-}
-label.check .hint { display: block; margin-top: 5px; }
 
 /* Rows and tabs that navigate are anchors now, so they need the button reset an <a> does not
    get for free. Anchors were chosen over click handlers deliberately: an ordinary navigation is
