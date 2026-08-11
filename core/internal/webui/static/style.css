@@ -459,3 +459,23 @@ label.check input {
   accent-color: var(--accent);
 }
 label.check .hint { display: block; margin-top: 5px; }
+
+/* Rows and tabs that navigate are anchors now, so they need the button reset an <a> does not
+   get for free. Anchors were chosen over click handlers deliberately: an ordinary navigation is
+   what lets the browser drive its own back gesture, history and scroll restoration. */
+a.row, nav a {
+  text-decoration: none;
+  color: inherit;
+  -webkit-tap-highlight-color: transparent;
+}
+nav a {
+  display: inline-flex;
+  align-items: center;
+  border-bottom: 2px solid transparent;
+  color: var(--dim);
+  padding: 9px 12px;
+  font-size: 14px;
+  min-height: var(--tap);
+  white-space: nowrap;
+}
+nav a.active { color: var(--ink); border-bottom-color: var(--accent); }

@@ -287,7 +287,13 @@ function renderApps(d, payload, body) {
 // appRow is deliberately three lines and a chip — it has to be readable on a phone, and the
 // details live one tap away rather than in a row that scrolls sideways.
 function appRow(a, device) {
-  const r = el("button", { className: "row" }, [
+  // A ROW THAT NAVIGATES IS AN <a href>, not a button with a click handler: it gives the browser
+  // an ordinary navigation to drive, which is what makes its own back gesture, history and scroll
+  // restoration work without being reimplemented.
+  const r = el("a", {
+    className: "row",
+    href: `/device/${encodeURIComponent(device.udid)}/${encodeURIComponent(a.bundle_id)}`,
+  }, [
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: a.store_name || a.name || a.bundle_id }),
       el("div", { className: "row-sub", textContent: a.bundle_id }),
@@ -300,23 +306,13 @@ function appRow(a, device) {
       a.in_library ? el("span", { className: "badge library", textContent: "in library" }) : null,
     ]),
   ]);
-  r.onclick = () => showAppDetail({ app: a, device });
+  r.onclick = () => { detail = { app: a, device }; };
   return r;
 }
 
 // ---------------------------------------------------------------------------
 // App detail — one view for both states, reached from a device or from the library.
 // ---------------------------------------------------------------------------
-
-function showAppDetail(ctx) {
-  detail = ctx;
-  // A URL that describes what is on screen, so the entry the swipe goes back FROM is also one
-  // a reload or a shared link can land on.
-  const path = ctx.item
-    ? `/library/${ctx.item.id}`
-    : `/device/${encodeURIComponent(ctx.device.udid)}/${encodeURIComponent(ctx.app.bundle_id)}`;
-  show("app", { path });
-}
 
 function renderAppDetail() {
   const root = $("#screen-app");
@@ -431,7 +427,7 @@ function renderAppDetail() {
         toast(`Deleted ${item.name}.`);
         await refreshLibrary();
         appsCache.clear();
-        show("library");
+        navigate("/library");
       } catch (e) { toast(e.message, true); }
     };
     blocks.push(el("div", { className: "actions-block" }, [del]));
@@ -598,14 +594,14 @@ async function refreshLibrary() {
 function renderLibrary() {
   const root = $("#screen-library");
   const rows = library.map((it) => {
-    const r = el("button", { className: "row" }, [
+    const r = el("a", { className: "row", href: `/library/${it.id}` }, [
       el("div", { className: "row-main" }, [
         el("div", { className: "row-title", textContent: it.name || it.bundle_id }),
         el("div", { className: "row-sub", textContent: `${it.version || "—"} · ${fmtSize(it.size)}` }),
       ]),
       el("div", { className: "row-right" }, [el("span", { className: "chev", textContent: "›" })]),
     ]);
-    r.onclick = () => showAppDetail({ item: it });
+    r.onclick = () => { detail = { item: it }; };
     return r;
   });
 
@@ -668,123 +664,155 @@ function rerenderCurrent() {
   if (current === "app") renderAppDetail();
 }
 
-// EVERY VIEW CHANGE IS A HISTORY ENTRY, which is what makes the iOS edge-swipe work.
+// ---------------------------------------------------------------------------
+// Routing — the browser owns navigation; this app only owns rendering.
 //
-// A single page that swaps views with JavaScript has one history entry, so a back swipe leaves
-// the app entirely — there is nothing behind it to go back to. Pushing an entry per view gives
-// the gesture, the browser's own back button and the header arrow all the same meaning, and
-// costs a URL that describes what is on screen, which a reload or a shared link can then land on.
+// The invariant worth optimising for: going BACK should reveal the screen you left, not
+// reconstruct a new one that happens to have the same URL. Everything below follows from that.
 //
-// `push` is false when the navigation IS a back/forward event: re-pushing there would fight the
-// user, appending an entry each time they tried to leave.
-// SCROLL POSITION IS PER HISTORY ENTRY, kept by us rather than by the browser.
+//   1. Every screen is a real URL and a real history entry, reached by a real <a href>. Rows are
+//      links, not click handlers, so Safari sees an ordinary navigation and drives its own back
+//      gesture with its own machinery.
+//   2. The Navigation API is the primary mechanism. It fires BEFORE a traversal commits, so the
+//      destination can be restored while the gesture is still on screen rather than after it.
+//   3. SAFARI OWNS SCROLL RESTORATION. This is the part I got wrong before: I set
+//      scrollRestoration = "manual", passed `scroll: "manual"` to intercept(), and then restored
+//      offsets myself two animation frames later. That is using the right API to fight the
+//      browser. Left alone, an intercepted navigation restores scroll AFTER the handler resolves
+//      — the saved offset for a traversal, the top for a new navigation — which is exactly the
+//      wanted behaviour and needs no code at all.
+//   4. Back does not rebuild and does not re-fetch. Screens stay in the document, so restoring
+//      one is unhiding what is already there; fresh data arrives afterwards from the pollers.
+//   5. The document scrolls, not a nested container, so there is one scrolling area for the
+//      browser to save and restore.
 //
-// `history.scrollRestoration = "manual"` turns off the browser's own attempt, which cannot work
-// here: it restores the offset at popstate time, when this app has not yet rebuilt the list, so
-// it lands past the end of a short page and leaves a blank viewport. We restore after the
-// content is back, which is the only moment the offset means anything.
-//
-// Going BACK returns you where you were; going FORWARD to something new starts at the top. That
-// is what native apps and ordinary pages do, and the difference is exactly whether the entry has
-// been seen before.
-history.scrollRestoration = "manual";
+// No custom edge-pan, no fake navigation controller. The browser is better at its own gesture
+// than an imitation of it, and competing produces exactly the glitches this is meant to remove.
 
-const scrollPositions = new Map(); // history key -> scrollY
-let historyKey = 0;
-let nextHistoryKey = 1;
-
-function rememberScroll() {
-  scrollPositions.set(historyKey, window.scrollY);
+// routeFor parses a URL into what to render.
+function routeFor(url) {
+  const path = url.pathname;
+  let m;
+  if ((m = path.match(/^\/library\/(\d+)$/))) return { screen: "app", libraryID: m[1] };
+  if ((m = path.match(/^\/device\/([^/]+)\/([^/]+)$/))) {
+    return { screen: "app", udid: decodeURIComponent(m[1]), bundle: decodeURIComponent(m[2]) };
+  }
+  if (path === "/library" || path === "/accounts") return { screen: path.slice(1) };
+  return { screen: "devices" };
 }
 
-// restoreScroll waits for layout before setting the offset. A single frame is not enough: the
-// render happens in this task, and the page has not been laid out until the frame after it, so
-// scrolling immediately clamps against the OLD height and silently lands at the top.
-function restoreScroll(y) {
-  requestAnimationFrame(() => requestAnimationFrame(() => window.scrollTo(0, y || 0)));
+function pathForScreen(screen) {
+  return screen === "devices" ? "/" : `/${screen}`;
 }
 
-function show(screen, { path, push = true, restore = null } = {}) {
-  if (push) rememberScroll();
+// renderRoute puts the right screen on screen. `traverse` is true for back/forward, and is the
+// whole reason this takes an argument: a traversal must restore, a new navigation must build.
+async function renderRoute(url, { traverse = false } = {}) {
+  const route = routeFor(url);
 
+  if (route.screen === "app") {
+    // The detail view is rebuilt either way — it shows one specific app, and reusing the
+    // previous render would show the wrong one. It is also short, so there is nothing to
+    // restore beyond the top of the page.
+    if (route.libraryID) {
+      const item = library.find((i) => String(i.id) === route.libraryID);
+      if (item) detail = { item };
+    } else {
+      const device = devices.find((d) => d.udid === route.udid);
+      const payload = appsCache.get(route.udid);
+      const app = payload && payload.apps.find((a) => a.bundle_id === route.bundle);
+      if (device && app) detail = { app, device };
+    }
+    if (!detail) {
+      // Nothing cached to show — a cold load of a deep link. Fall back rather than block on
+      // a scan the visitor did not ask for.
+      showScreen(route.libraryID ? "library" : "devices");
+      if (!traverse) renderScreen(route.libraryID ? "library" : "devices");
+      return;
+    }
+    showScreen("app");
+    renderAppDetail();
+    return;
+  }
+
+  showScreen(route.screen);
+  // ON A TRAVERSAL, DO NOT REBUILD. The content is still in the document from last time, and
+  // rebuilding it here would empty the screen for the duration of the gesture and refill it at
+  // the end — which is the blank-swipe symptom. A screen that has never been built still has to
+  // be, hence the emptiness check rather than a blanket skip.
+  const root = $(`#screen-${route.screen}`);
+  if (!traverse || root.childElementCount === 0) renderScreen(route.screen);
+}
+
+function showScreen(screen) {
   current = screen;
-  for (const b of document.querySelectorAll("nav button")) {
-    // The detail view belongs to whichever list you came from, so no tab owns it.
+  for (const b of document.querySelectorAll("nav a")) {
     b.classList.toggle("active", b.dataset.screen === screen);
   }
   for (const s of ["devices", "library", "accounts", "app"]) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
   $("#back").hidden = screen !== "app";
-
-  if (push) {
-    const url = path || (screen === "devices" ? "/" : `/${screen}`);
-    const key = nextHistoryKey++;
-    const state = { screen, key, detail: detail && (detail.item
-      ? { item: detail.item.id }
-      : { udid: detail.device.udid, bundle: detail.app.bundle_id }) };
-    // replaceState when the target is where we already are, so tapping the current tab does
-    // not stack identical entries the user then has to swipe through one by one.
-    if (location.pathname === url) history.replaceState(state, "", url);
-    else history.pushState(state, "", url);
-    historyKey = key;
-  }
-
-  // The accounts LIST is refreshed on arrival; the form is static markup and is never touched.
-  if (screen === "accounts") {
-    refreshAccounts().then(() => { renderAccountsList(); restoreScroll(restore); });
-    return;
-  }
-  rerenderCurrent();
-  restoreScroll(restore);
 }
 
-// applyRoute restores a view from a history entry — on a back/forward, or on a cold load of a
-// deep link. The state object is preferred when present; the path is the fallback, because a
-// reload arrives with no state at all.
-async function applyRoute(state) {
-  const path = location.pathname;
-  // The offset this entry was left at, if it has been visited before. Absent for a cold load
-  // or a forward move into something new, which correctly start at the top.
-  const restore = state && state.key != null ? scrollPositions.get(state.key) : null;
-  if (state && state.key != null) historyKey = state.key;
-
-  if (state && state.screen && state.screen !== "app") {
-    show(state.screen, { push: false, restore });
-    return;
-  }
-
-  const lib = path.match(/^\/library\/(\d+)$/);
-  if (lib) {
-    const item = library.find((i) => String(i.id) === lib[1]);
-    if (item) { detail = { item }; show("app", { push: false, restore }); return; }
-    show("library", { push: false, restore });
-    return;
-  }
-
-  const dev = path.match(/^\/device\/([^/]+)\/([^/]+)$/);
-  if (dev) {
-    const udid = decodeURIComponent(dev[1]);
-    const bundle = decodeURIComponent(dev[2]);
-    const device = devices.find((d) => d.udid === udid);
-    // The device's app list may not be loaded — a reload lands here with nothing cached, and
-    // that scan is slow, so fall back to the device list rather than making the user wait
-    // on a view they only arrived at by going backwards.
-    const payload = appsCache.get(udid);
-    const app = payload && payload.apps.find((a) => a.bundle_id === bundle);
-    if (device && app) { detail = { app, device }; show("app", { push: false, restore }); return; }
-    show("devices", { push: false, restore });
-    return;
-  }
-
-  if (path === "/library" || path === "/accounts") {
-    show(path.slice(1), { push: false, restore });
-    return;
-  }
-  show("devices", { push: false, restore });
+function renderScreen(screen) {
+  if (screen === "devices") renderDevices();
+  if (screen === "library") renderLibrary();
+  if (screen === "accounts") refreshAccounts().then(renderAccountsList);
+  if (screen === "app") renderAppDetail();
 }
 
-window.addEventListener("popstate", (ev) => { applyRoute(ev.state); });
+// rerenderCurrent is what the pollers call — never a navigation, just fresher data.
+function rerenderCurrent() {
+  if (current === "devices") renderDevices();
+  if (current === "library") renderLibrary();
+  if (current === "app") renderAppDetail();
+  // Accounts is excluded: it is the only screen holding text someone is part-way through
+  // typing, and nothing on it changes on its own.
+}
+
+// navigate is used only where a link cannot be (a row that is really a button).
+function navigate(path) {
+  if (window.navigation) window.navigation.navigate(path);
+  else { history.pushState(null, "", path); renderRoute(new URL(path, location.href)); }
+}
+
+if (window.navigation && typeof window.navigation.addEventListener === "function") {
+  window.navigation.addEventListener("navigate", (ev) => {
+    if (!ev.canIntercept || ev.hashChange || ev.downloadRequest !== null) return;
+    const url = new URL(ev.destination.url);
+    if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
+
+    ev.intercept({
+      // NO `scroll` OPTION. The default hands scroll back to the browser once this handler
+      // resolves: the saved offset for a traversal, the top for a new navigation. Setting it
+      // to "manual" here is precisely the mistake that made the previous attempt worse.
+      handler: async () => {
+        await renderRoute(url, { traverse: ev.navigationType === "traverse" });
+      },
+    });
+  });
+} else {
+  // Browsers without the Navigation API: ordinary links plus popstate, and the browser's own
+  // automatic scroll restoration left switched on.
+  document.addEventListener("click", (ev) => {
+    const a = ev.target.closest && ev.target.closest("a[href]");
+    if (!a || ev.metaKey || ev.ctrlKey || ev.shiftKey || a.target) return;
+    const url = new URL(a.href, location.href);
+    if (url.origin !== location.origin) return;
+    ev.preventDefault();
+    if (url.pathname === location.pathname) return;
+    history.pushState(null, "", url.pathname);
+    renderRoute(url);
+  });
+  window.addEventListener("popstate", () => {
+    renderRoute(new URL(location.href), { traverse: true });
+  });
+}
+
+// The header arrow is the same action as the swipe and the browser's back button.
+$("#back").onclick = () => history.back();
+
 
 // ---------------------------------------------------------------------------
 // Accounts — list rendering only. The form lives in index.html and is wired once, below.
@@ -905,9 +933,6 @@ $("#signin").addEventListener("submit", async (ev) => {
 // different means lands somewhere neither of them promised.
 $("#back").onclick = () => history.back();
 
-for (const b of document.querySelectorAll("nav button")) {
-  b.onclick = () => show(b.dataset.screen);
-}
 
 // AUTO-REFRESH, like quince. Devices come and go — a phone that wakes up should turn up without
 // a reload. Only the DEVICE LIST is polled: it is two cheap calls per device, whereas the app
@@ -945,6 +970,6 @@ document.addEventListener("visibilitychange", () => { if (!document.hidden) poll
 
   // Restore whatever the URL names rather than always starting at Devices, so a reload — or a
   // link someone kept — lands where it says it will.
-  await applyRoute(history.state);
+  await renderRoute(new URL(location.href));
   pollJobs();
 })();
