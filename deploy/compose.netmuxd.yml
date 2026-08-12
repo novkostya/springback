@@ -58,15 +58,21 @@ services:
     # UNPRIVILEGED IS ENOUGH. `privileged: true` is the usual advice for USB in a container and
     # grants far more than this needs; these two lines are the whole requirement.
     #
-    # HOTPLUG DOES NOT WORK, and that is worth knowing before it confuses you. A device plugged
-    # in AFTER this container started will not appear inside it: a bind mount does not propagate
-    # device nodes created later. The remedy is one command —
+    # RESTART netmuxd AFTER PLUGGING A DEVICE IN, and the reason is not the one you would guess.
     #
     #     docker compose restart netmuxd
     #
-    # — and it matters exactly once per device, because pairing is once per device and Wi-Fi
-    # needs no cable afterwards. Running the muxer in a container is a known trade with a known
-    # price; this is the price.
+    # It is NOT that the device node is invisible. Docker's bind mount of /dev/bus/usb does
+    # propagate nodes created later, and the wildcard rule above already covers a minor that did
+    # not exist at start — measured with a phone on a cable: the node appeared inside the
+    # container unprompted and netmuxd logged the device's serial immediately.
+    #
+    # What actually happens is that netmuxd tries claim_interface about five times over five
+    # seconds and then gives up FOR GOOD. If anything else holds the interface at that moment —
+    # a host usbmuxd, another container's muxer — netmuxd never tries again. Measured: an
+    # interface freed three minutes later was still unclaimed until the container was restarted.
+    #
+    # So this matters once per device, and mostly when something else was holding the bus.
     device_cgroup_rules:
       - "c 189:* rmw"
     volumes:

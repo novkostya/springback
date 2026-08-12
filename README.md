@@ -108,16 +108,19 @@ docker compose up -d
 Open `http://<the box>:8971`. The first page asks you to choose a password — there is nothing to
 configure before starting, and no password sitting in the compose file.
 
-**Two things about that muxer, both of which will otherwise waste your afternoon.**
+**Three things about that muxer, all of which will otherwise waste your afternoon.**
 
-*A device plugged in after the containers started will not be seen.* A bind mount does not
-propagate device nodes created later, so plug the device in and then:
+*Restart netmuxd after plugging a device in.*
 
 ```sh
 docker compose restart netmuxd
 ```
 
-This matters exactly once per device, because pairing is once per device.
+Not because the device is invisible — it isn't; netmuxd sees it straight away. netmuxd tries to
+claim the USB interface about five times over five seconds and then gives up permanently, so if
+anything else is holding the bus at that moment (a host `usbmuxd`, another container's muxer) it
+never tries again, even after the interface is free. Look for `interface is busy (errno 16)` in
+`docker logs netmuxd`. Stop whatever else owns the bus, then restart netmuxd.
 
 *Wi-Fi devices only appear once they are paired.* An mDNS advertisement carries no serial number,
 so netmuxd matches it against the pairing records it holds to work out which phone it is looking
