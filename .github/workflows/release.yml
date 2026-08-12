@@ -18,24 +18,24 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The gates again, on the exact commit being published. A tag can be pushed at any moment,
       # including to a commit whose CI never ran or never finished.
       - name: gates
         run: make gates
 
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
 
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ghcr.io/${{ github.repository }}
           # v0.11.0 publishes :0.11.0, :0.11 and :latest. The two-part tag is what lets somebody
@@ -51,7 +51,7 @@ jobs:
         run: grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
 
       - name: build and push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
