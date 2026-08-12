@@ -77,8 +77,37 @@ type Registry struct {
 	onChange func()
 }
 
+// MaxRunning caps how many jobs run AT ONCE, whoever asked for them.
+//
+// Single-flighting by key already stops the same app being downloaded twice, and that is the case
+// everybody expects to be the problem. It does nothing about DIFFERENT keys: forty POSTs naming
+// forty app ids were all accepted, each with its own goroutine and its own ipatool — measured.
+// Nobody legitimately downloads forty apps at once, and on a public demo, where the password is
+// printed on the login screen, "nobody legitimately" is not a bound.
+//
+// Eight is generous for the real use — archiving a shelf of apps one evening — and small enough
+// that eight concurrent ipatool processes is a busy box rather than a dead one.
+const MaxRunning = 8
+
 func NewRegistry() *Registry {
 	return &Registry{jobs: map[string]*Job{}, retain: 2 * time.Minute}
+}
+
+// Running counts the jobs currently in flight.
+func (r *Registry) Running() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.runningLocked()
+}
+
+func (r *Registry) runningLocked() int {
+	n := 0
+	for _, j := range r.jobs {
+		if j.State == Running {
+			n++
+		}
+	}
+	return n
 }
 
 // Notify registers the callback fired on every change. One listener, because there is one UI.
@@ -122,6 +151,22 @@ func (r *Registry) Start(kind Kind, key, label, target string, fn func(ctx conte
 				r.mu.Unlock()
 				return &cp
 			}
+		}
+	}
+	// CHECKED UNDER THE SAME LOCK THAT CREATES THE JOB, which is the whole reason it is here
+	// rather than in the handler. A caller that counts first and starts second lets every
+	// request in a burst pass the count before any of them has started — so the check would
+	// hold for two people clicking at once and fail for exactly the case it exists to stop.
+	if r.runningLocked() >= MaxRunning {
+		r.mu.Unlock()
+		// A refusal shaped like a finished job, because that is the shape every caller
+		// already handles: the UI shows it as failed with this text and nothing has to learn
+		// a new error path. It is not recorded in the map — a refusal is not work.
+		return &Job{
+			ID: "rejected", Kind: kind, Key: key, Label: label, Target: target,
+			State: Failed, Percent: -1,
+			StartedAt: time.Now().UTC(), EndedAt: time.Now().UTC(),
+			Error: "Too many downloads and installs at once. Wait for one to finish, then try again.",
 		}
 	}
 	r.seq++

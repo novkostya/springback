@@ -377,7 +377,44 @@ func SameOrigin(r *http.Request) bool {
 // argon2id
 // ---------------------------------------------------------------------------
 
+// derivations bounds how many argon2id derivations run AT ONCE, anywhere in the process.
+//
+// THE COST THAT MAKES THE HASH GOOD IS ALSO A WEAPON POINTED AT THE BOX. One derivation is 64 MiB
+// by design, and the login route hands that cost to anyone who can reach the port: a wrong password
+// costs the sender ~100 bytes and the server 64 MiB. Measured against this image, on an ordinary
+// install with a password set, sixteen concurrent wrong guesses:
+//
+//	before   idle 138 MB  ->  1059 MB
+//	after    idle 138 MB  ->   295 MB, and 296 MB at SIXTY-FOUR concurrent — flat, because the
+//	                           bound is on the work rather than on the number of askers
+//
+// The per-IP throttle does not bound it, and this is the part worth being plain about: springback
+// believes X-Forwarded-For unconditionally, so an attacker who varies that header gets a fresh
+// bucket every time. Measured — sixty wrong passwords from sixty forwarded addresses were all
+// answered 401, while twenty from one address reached 429. That trade is deliberate and documented
+// where the header is read (it bills the right visitor behind a proxy, which is what a public demo
+// needs), but it means the throttle counts honest mistakes rather than attacks, and cannot be the
+// thing that bounds memory.
+//
+// So the bound is here, on the resource itself, where no caller can forget it and no header can
+// move it. Requests over the limit WAIT rather than being refused: a queued request holds a
+// connection and a goroutine, which is kilobytes, and the alternative is refusing logins to a
+// household because somebody is knocking. Under attack the honest visitor's sign-in is slow.
+//
+// Two, not more: the peak is this many times 64 MiB, and springback shares its box with a container
+// full of device tooling. Nothing legitimate needs a third — this is one household's password,
+// typed by hand.
+const maxConcurrentDerivations = 2
+
+var derivations = make(chan struct{}, maxConcurrentDerivations)
+
 func hashPassword(password string, p Params) (string, error) {
+	derivations <- struct{}{}
+	defer func() { <-derivations }()
+	return deriveHash(password, p)
+}
+
+func deriveHash(password string, p Params) (string, error) {
 	salt := make([]byte, p.SaltLen)
 	if _, err := rand.Read(salt); err != nil {
 		return "", err
@@ -392,6 +429,15 @@ func hashPassword(password string, p Params) (string, error) {
 }
 
 func verifyPassword(password, encoded string) (bool, error) {
+	// Bounded for the same reason as hashing, and this is the route that matters: an unlimited
+	// number of wrong passwords is something a stranger can arrange, whereas setup answers 409
+	// without deriving anything at all.
+	derivations <- struct{}{}
+	defer func() { <-derivations }()
+	return deriveAndCompare(password, encoded)
+}
+
+func deriveAndCompare(password, encoded string) (bool, error) {
 	parts := strings.Split(encoded, "$")
 	if len(parts) != 6 || parts[1] != "argon2id" {
 		return false, errors.New("password file is not an argon2id hash")

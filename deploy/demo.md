@@ -102,6 +102,14 @@ party. No trust list is needed because springback believes the header unconditio
 the documented trade the other way (a visitor can rotate the header to evade their own throttle),
 and on an instance whose password is published there is nothing to evade.
 
+## The exposed surface was reviewed first
+
+[`demo-surface.md`](demo-surface.md) is a route-by-route disposition of everything a stranger can
+reach, written before the instance existed — prompted by quince#444, whose ruling is that a preset
+public password makes every authenticated endpoint effectively unauthenticated. Two findings needed
+code before exposure: an unbounded memory amplifier on the login route, and unbounded concurrent
+jobs. Both are in the shipping product rather than the demo, and both are fixed.
+
 ## The KDF is deliberately cheap here
 
 Sign-in is the largest allocation in the process: argon2id at the production parameters costs
