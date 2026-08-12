@@ -19,8 +19,26 @@
 # empty directory it discovers every phone on the network and serves none of them — measured, and
 # it logs "No paired device matched service ...".
 #
-# So: plug the device in over USB once and pair it from the Devices screen. That writes the
-# record into ./data/lockdown, both containers see it, and from then on Wi-Fi is enough.
+# So: plug the device in over USB once and pair it. That writes the record into ./data/lockdown,
+# both containers see it, and from then on Wi-Fi is enough.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# NETMUXD PAIRS BY ITSELF, AND YOU SHOULD KNOW THAT BEFORE YOU PLUG SOMETHING IN
+#
+# Plug in a device it has no pairing record for and netmuxd calls lockdown.pair() immediately —
+# the phone shows "Trust This Computer?" without anyone having asked for it. Read from the
+# source of the pinned version (daemon/mod.rs: "No valid pairing record for …; starting pair
+# flow"), and there is no flag to turn it off: the complete option list is --host, --port,
+# --socket-path, --plist-storage, --upstream-usbmuxd, --disable-{usb,mdns,unix,heartbeat}.
+#
+# It is not dangerous on a box you own — trust still requires someone to tap the phone, and
+# pairing is something you were going to do anyway. But it does mean springback's own Pair
+# button is not the only thing that can start a pairing, which is worth knowing if you plug in
+# somebody else's phone to charge it.
+#
+# --disable-usb stops it, at the cost of USB entirely — which is the other compose file's
+# arrangement: usbmuxd on the host does NOT pair on its own, so there the Pair button is the
+# only thing that ever raises a trust prompt.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 services:

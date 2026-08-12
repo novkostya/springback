@@ -124,10 +124,19 @@ so netmuxd matches it against the pairing records it holds to work out which pho
 at. With no record it discovers every device on the network and serves none of them — it logs
 `No paired device matched service …`. Pair over the cable once; Wi-Fi is enough after that.
 
+*netmuxd starts pairing by itself.* Plug in a device it has no record for and it calls
+`lockdown.pair()` straight away, so the phone asks "Trust This Computer?" without anyone pressing
+anything. There is no option to disable it. Nothing can happen without someone tapping the phone,
+and pairing is what you plugged it in for — but it does mean springback's own **Pair** button is
+not the only thing that can raise that prompt. If you would rather pairing were always deliberate,
+use the usbmuxd setup below: usbmuxd never pairs on its own, so the button is the only trigger.
+
 ### If you would rather not run netmuxd
 
 `usbmuxd` from your distribution works too, on the host, and springback then needs only its
-socket. Simpler, and it only ever sees devices on the cable — no Wi-Fi.
+socket. Two differences, one in each direction: it only ever sees devices on the cable, so no
+Wi-Fi — and it never pairs on its own, so the **Pair** button is the only thing that can ask a
+device to trust this computer.
 
 ```sh
 # Debian/Ubuntu: apt install usbmuxd  ·  Arch: pacman -S usbmuxd  ·  Alpine: apk add usbmuxd
