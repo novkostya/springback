@@ -46,7 +46,7 @@ const CookieName = "springback_session"
 // THERE IS A USERNAME FIELD AND IT IS NOT DECORATION. A password manager will not reliably offer
 // to save or fill a lone password input — it has nothing to key the entry on, and Safari in
 // particular quietly declines. A readonly, prefilled username gives it the anchor it wants, and
-// costs a single-user app nothing. Learned on quince.
+// costs a single-user app nothing.
 const Username = "springback"
 
 var (
@@ -311,7 +311,7 @@ func IsLoopback(host string) bool {
 // SECURE IS NOT SET ON A PLAIN-HTTP ORIGIN, and that is the whole fix rather than an oversight.
 // A cookie marked Secure is DISCARDED by the browser when it arrives over http, so the login
 // succeeds, the response sets a cookie, the browser throws it away, and the next request is
-// unauthenticated again — a login that fails with no error anywhere. quince met exactly this.
+// unauthenticated again — a login that fails with no error anywhere, and nothing in any log.
 // The honest answer on plain http is a cookie that works plus a banner saying it is in the
 // clear, which is what the UI does.
 func CookieForToken(r *http.Request, token string, maxAge int) *http.Cookie {

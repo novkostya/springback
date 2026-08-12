@@ -154,7 +154,7 @@ function cmpVersions(a, b) {
 }
 
 // emailForSlug turns an account directory name back into the Apple ID it stands for. The slug is
-// a filesystem-safe mangling (`novkostya@gmail.com` -> `novkostya-at-gmail.com`) and has no
+// a filesystem-safe mangling (`someone@example.com` -> `someone-at-example.com`) and has no
 // business appearing in the UI, but it is what the library records against each download.
 const emailForSlug = (slug) => {
   const acc = accounts.find((a) => a.slug === slug);
@@ -292,10 +292,10 @@ function renderDevices() {
 
 // deviceLabel disambiguates devices that share a name.
 //
-// TWO PHONES CAN HAVE THE SAME NAME, and on this stand two do: `alina-iphone` is two different
-// handsets with different udids and different models. Rendered plainly they are two identical
-// rows and there is no way to tell which one you are about to install onto. A name is a label
-// the owner chose; the udid is the identity.
+// TWO PHONES CAN HAVE THE SAME NAME, and on the stand this was built against, two did: one name,
+// two handsets, two udids, two models. Rendered plainly they are identical rows with no way to
+// tell which one you are about to install onto. A name is a label the owner chose; the udid is
+// the identity.
 function deviceLabel(d) {
   const name = d.name || d.udid;
   const clashes = devices.filter((o) => (o.name || o.udid) === name).length > 1;
@@ -1473,11 +1473,11 @@ $("#signin").addEventListener("submit", async (ev) => {
 // different means lands somewhere neither of them promised.
 
 
-// AUTO-REFRESH, like quince. Devices come and go — a phone that wakes up should turn up without
+// AUTO-REFRESH. Devices come and go — a phone that wakes up should turn up without
 // a reload. Only the DEVICE LIST is polled: it is two cheap calls per device, whereas the app
 // scan is 162 store lookups and must stay an explicit action.
 //
-// The five-second cadence matches quince's staleTime. Paused when the tab is hidden, because
+// Five seconds is slow enough to be free and fast enough to feel live. Paused when hidden,
 // polling a background tab is how a personal tool quietly becomes a load.
 const DEVICE_POLL_MS = 5000;
 

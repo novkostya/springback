@@ -1,11 +1,10 @@
 // sbwifi — read and write the device's Wi-Fi sync flag.
 //
 // WHY A HELPER AND NOT A FLAG ON ideviceinfo. The shipped ideviceinfo can only READ lockdown
-// values; there is no upstream way to write one from the command line. quince solves this by
-// building libimobiledevice from source with an in-tree patch that adds `--set-bool`. That is a
-// reasonable thing for quince, which already vendors a patched fork; carrying one here would mean
-// springback owns a patch queue against someone else's C project in order to flip one boolean.
-// Forty lines against the same library the image already links is the smaller debt.
+// values; there is no upstream way to write one from the command line. The alternative is
+// building libimobiledevice from source with a patch that adds `--set-bool` — which means owning
+// a patch queue against someone else's C project in order to flip one boolean. Forty lines
+// against the same library the image already links is the smaller debt.
 //
 // WHAT THE FLAG DOES. com.apple.mobile.wireless_lockdown/EnableWifiConnections is what makes a
 // device reachable when it is not plugged in. With it off, the device only answers over USB and

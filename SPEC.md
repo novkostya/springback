@@ -2,16 +2,14 @@
 
 Keep the apps you own, after Apple stops offering them.
 
-**Status:** written 2026-08-11 by the supervisor seat, from a full manual run of the whole
-flow on real hardware the same morning. Every command below was executed and its output
-observed; nothing here is inferred.
+**Status:** written 2026-08-11 from a full manual run of the whole flow on real hardware the same
+morning. Every command below was executed and its output observed; nothing here is inferred.
+Sections gained since then (auth, pairing, icons) are marked where they appear.
 
-**Not quince.** Deliberately unassociated: quince is heading for a public release, this uses
-an unofficial client against Apple's private API, and the reputational coupling would run one
-way only. Shares a host and a netmuxd with quince; shares no name, no repo, no process.
-
-**Process:** no PRs, no branch protection, push to `main`. Personal tool, distributed as an
-image to people who run it on their own box with their own Apple ID.
+**What this document is.** The measured record — which commands work, which flags matter, and
+what each failure actually means. It is referenced by section number from comments throughout the
+code, so the numbering is stable. If you want to *use* springback, read the
+[README](README.md) instead; this is the reasoning underneath it.
 
 ---
 
@@ -32,35 +30,44 @@ Accounts (add / list / remove, incl. 2FA) · library (add, download, list, delet
 Download progress streaming · version pinning (`ipatool list-versions`) · retry/backoff ·
 auth on the web app itself · purchase-history enumeration (see §8) · anything pretty.
 
+*(Since shipped: download and install progress, auth on the web app, device pairing and Wi-Fi
+sync, app icons, search. Purchase-history enumeration remains unbuilt — see
+[docs/purchase-history.md](docs/purchase-history.md).)*
+
 ---
 
 ## 2. Architecture
 
-Sibling container to quince on the same LXC. **Both on host network.**
+A single container. **The muxer runs on the host, not in here.**
 
-    springback ──shells out to──> ipatool          (Apple Store client, Go, MIT)
-           ──shells out to──> ideviceinstaller (install to device)
-           ──reads──────────> 127.0.0.1:27015  (quince's netmuxd, already running)
-           ──mounts ro──────> quince's /var/lib/lockdown  (pairing records)
+    springback ──shells out to──> ipatool           (Apple Store client, Go, MIT)
+               ──shells out to──> ideviceinstaller  (install to device)
+               ──shells out to──> idevicepair       (pairing)
+               ──talks to───────> usbmuxd           (host socket, or netmuxd over TCP)
+               ──reads/writes───> /var/lib/lockdown (pairing records)
 
-**Do not run a second usbmuxd.** quince's container already runs one; a second fights it for
-the USB bus. springback never needs USB — everything goes over netmuxd's TCP port.
+**Do not run a second usbmuxd.** Whatever owns the USB bus on the host already runs one, and a
+second daemon fights it for the same devices. springback reaches devices through the host's
+socket; for devices on Wi-Fi, point it at netmuxd instead.
 
-**Mount the pairing records READ-ONLY.** A day-old tool must not be able to corrupt the
-pairing state quince depends on.
+**The pairing records.** springback pairs devices itself, so it needs them read-write. Mount them
+**read-only** when another tool on the box owns them — springback will still read them to know
+which devices exist while they are asleep, and will show the pairing controls as unavailable with
+a reason rather than failing.
 
     volumes:
-      - ./springback/library:/library
-      - ./springback/accounts:/accounts
-      - /var/lib/lockdown:/var/lib/lockdown:ro   # from quince's container
-    network_mode: host
+      - ./data/library:/library
+      - ./data/accounts:/accounts
+      - /var/run/usbmuxd:/var/run/usbmuxd
+      - /var/lib/lockdown:/var/lib/lockdown
 
-Every device call needs:
+Device calls over a network muxer need:
 
     USBMUXD_SOCKET_ADDRESS=127.0.0.1:27015
 
----
+Left unset, the libimobiledevice tools use their own default — the unix socket above.
 
+---
 ## 3. The commands that actually work
 
 All verified 2026-08-11. Flags matter; the wrong one fails in ways that look like something else.
@@ -149,43 +156,62 @@ is one-time per delisted app.
 
 ## 5. HTTP API
 
+Everything under `/api` needs a session, bar `/api/health` and the auth endpoints themselves.
+
+    GET    /api/auth/status                 {state, username, secure, loopback}
+    POST   /api/auth/setup                  {password}   first run only -> 409 after
+    POST   /api/auth/login                  {password}
+    POST   /api/auth/logout
+
     GET    /api/accounts                    list
     POST   /api/accounts                    {email, password}      -> 200 | 409 needs_2fa
     POST   /api/accounts/<slug>/2fa         {code}                 -> 200
     DELETE /api/accounts/<slug>
 
     GET    /api/devices                     [{udid, name, reachable, product_type, ios}]
+    GET    /api/devices/<udid>              + pair state, wifi_sync, transport, can_pair
     GET    /api/devices/<udid>/apps         installed apps + store_status per app
+    GET    /api/devices/<udid>/installed    bundle ids + versions only, no store lookups
+    GET    /api/devices/<udid>/icon.png     ?bundle=<b>&v=<version>
     POST   /api/devices/<udid>/install      {library_id}
+    POST   /api/devices/<udid>/pair
+    POST   /api/devices/<udid>/unpair
+    POST   /api/devices/<udid>/wifi-sync    {enable}
 
     GET    /api/library                     list
-    POST   /api/library                     {app_id, account_slug}  -> download
+    POST   /api/library                     {app_id, account_slug}  -> job id
     DELETE /api/library/<id>
+    GET    /api/library/<id>/icon.png       ?v=<downloaded_at>
 
+    GET    /api/jobs                        running + recently finished
+    GET    /api/jobs/<id>
     GET    /api/lookup?bundle_id=<b>        multi-storefront resolve -> {id|null, checked:[cc]}
 
-Downloads are slow (~30 s) and installs slower. Either return a job id and poll, or hold the
-request open — v0.1 may hold it open; say so in the UI.
+Downloads are slow (~30 s and up) and installs slower. v0.1 held the request open; it now starts
+a job and returns immediately, and the UI polls `/api/jobs`.
 
 ---
 
-## 6. UI — three screens
+## 6. UI — screens
 
-**Devices** (landing). Each paired device, reachable or not. Per device, its installed apps with
-a store status: `available` / **`DELISTED`** / `unknown`. Delisted ones sort first and carry an
-**Archive** button — which is the whole product in one gesture. Show the count: *"4 of 162 apps
-on this iPhone are no longer in the App Store."*
+**Devices** (landing). Every device this host knows about, reachable or not. Tapping one opens
+its page.
 
-**Library.** What has been downloaded: name, version, size, when, which account. Install-to-device
-picker. Delete.
+**One device.** Its facts, its pairing state (with Pair / Unpair), its Wi-Fi sync switch, and its
+installed apps with a store status each: `available` / **`DELISTED`** / `unknown`. Delisted ones
+sort first and carry an **Archive** button — which is the whole product in one gesture. The count
+is stated plainly: *"4 of 162 apps on this iPhone are no longer in the App Store."* A search box
+sits over the list, because two hundred rows is past what scrolling answers.
 
-**Accounts.** Add (email → password → 2FA), list, remove.
+**Library.** What has been downloaded: icon, name, version, size, when, which account. Tapping
+one opens the app page — install to any device, re-download, delete.
+
+**Accounts.** Add an Apple ID (email → password → 2FA), list, remove. Sign out of springback.
 
 Add-by-numeric-id lives on the Library screen as a secondary action, for apps not installed on
 any reachable device.
 
 ---
-
 ## 7. Failure modes, and what each one means
 
     ipatool "app not found"          used -b on a delisted app. Use -i. Or the id is wrong.

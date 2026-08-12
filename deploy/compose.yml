@@ -1,44 +1,72 @@
-# springback — sibling container to quince on the same LXC (SPEC §2).
+# springback — the ordinary way to run it.
 #
-# ────────────────────────────────────────────────────────────────────────────────────────────
-# THE THREE CONSTRAINTS BELOW ARE NOT STYLE. quince on this host is live and in daily use, and
-# each line exists because getting it wrong damages quince rather than springback.
+# Copy this next to a directory you are happy to keep app archives in, and `docker compose up -d`.
+# The first page it serves asks you to choose a password; there is nothing to configure first.
 #
-#   1. NO usbmuxd, AND NO SECOND ONE STARTED ANYWHERE. quince's container already runs one; a
-#      second fights it for the USB bus. springback never needs USB — every device call goes
-#      over netmuxd's TCP port, which is what USBMUXD_SOCKET_ADDRESS below selects. The image
-#      does not even install the package (see deploy/Dockerfile), so there is nothing here to
-#      start by accident.
+# THE ONE THING THAT IS NOT OBVIOUS: springback does not talk to iPhones by itself. It shells out
+# to Apple's userland (libimobiledevice), and that needs a *muxer* — `usbmuxd` — which owns the
+# USB bus and must run on the HOST, not in here. Two of them fight over the same devices, so this
+# image deliberately does not contain one. On a Linux box:
 #
-#   2. THE PAIRING RECORDS ARE MOUNTED READ-ONLY. springback lists them to know which devices
-#      exist while they are asleep, and that is all it ever does with them. A day-old tool must
-#      not be able to corrupt the pairing state quince depends on — losing it means re-pairing
-#      every device by hand, with physical access to each one.
+#     apt install usbmuxd        # or: pacman -S usbmuxd, apk add usbmuxd
+#     systemctl enable --now usbmuxd
 #
-#      The SOURCE PATH IS THE HOST-SIDE OF QUINCE'S OWN DATA MOUNT, not /var/lib/lockdown on
-#      this host. quince keeps its lockdown directory inside its data volume; the host's own
-#      /var/lib/lockdown holds only a SystemConfiguration.plist and no device records, so
-#      mounting that instead yields an empty directory and a Devices screen that silently forgets
-#      every sleeping device. Verified on the staging host 2026-08-11.
-#
-#   3. HOST NETWORK, because netmuxd is bound to 127.0.0.1:27015 and a bridged container cannot
-#      reach it. That is the same reason quince runs host-network here.
-# ────────────────────────────────────────────────────────────────────────────────────────────
+# Then the socket below is all springback needs.
 
 services:
   springback:
-    image: registry.novkostya.ru/springback:staging
+    image: ghcr.io/novkostya/springback:latest
     container_name: springback
     restart: unless-stopped
-    network_mode: host
-    environment:
-      # Not 8968 (quince) and not 8080 (quince on this stand). Nothing else on the box binds
-      # this one.
-      SPRINGBACK_LISTEN: ":8971"
-      # Every device call needs this (SPEC §2). It is quince's netmuxd, already running.
-      USBMUXD_SOCKET_ADDRESS: "127.0.0.1:27015"
+    ports:
+      - "8971:8971"
     volumes:
-      - ./springback/library:/library # downloaded .ipa files, keyed by numeric App Store id
-      - ./springback/accounts:/accounts # ipatool HOMEs + accounts.json. Sessions live here.
-      # Pairing records, from quince's data volume. READ-ONLY — see constraint 2 above.
-      - /root/quince/data/lockdown:/var/lib/lockdown:ro
+      # Downloaded .ipa files, one directory per numeric App Store id. This is the one that
+      # grows: apps are 100 MB to 1 GB each.
+      - ./data/library:/library
+      # Apple ID sessions, and the password you set on first run. Back this up; treat it the
+      # way you would treat a password manager's vault.
+      - ./data/accounts:/accounts
+
+      # The muxer's socket. This is how the container reaches devices plugged into the host.
+      - /var/run/usbmuxd:/var/run/usbmuxd
+
+      # Pairing records — the proof that a device trusts this computer. READ-WRITE, because
+      # springback pairs devices itself; see the note at the bottom if something else on the box
+      # already owns them.
+      - /var/lib/lockdown:/var/lib/lockdown
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Variations
+#
+# TLS. springback works over plain http and says so on every screen, because a session cookie
+# marked Secure is silently discarded over http and you would get a login that fails with no
+# error. On anything but a network you trust, put it behind a reverse proxy that terminates TLS
+# and forwards `X-Forwarded-Proto: https` — springback reads that header, marks the cookie
+# Secure, and drops the warning banner. Caddy needs one line:
+#
+#     springback.example.com {
+#         reverse_proxy localhost:8971
+#     }
+#
+# WI-FI DEVICES. Plain usbmuxd only sees devices on the cable. To reach a device over Wi-Fi you
+# need something that speaks the mux protocol over the network — netmuxd is the usual answer —
+# and then you point springback at it instead of the socket:
+#
+#     network_mode: host          # netmuxd binds 127.0.0.1, which a bridged container cannot reach
+#     environment:
+#       USBMUXD_SOCKET_ADDRESS: "127.0.0.1:27015"
+#
+# and drop the /var/run/usbmuxd mount. Pairing still needs the cable once; after that Wi-Fi is
+# enough, provided the device's Wi-Fi sync flag is on — springback has a switch for it on each
+# device's page.
+#
+# SHARING A HOST WITH SOMETHING ELSE THAT OWNS THE DEVICES. If another tool on this box already
+# pairs and manages these devices, let it keep ownership: mount the pairing records READ-ONLY
+#
+#     - /var/lib/lockdown:/var/lib/lockdown:ro
+#
+# and springback will read them to know which devices exist while they are asleep, show the
+# pairing controls as unavailable, and explain why. Losing a pairing record means re-pairing by
+# hand with physical access to each device, so it is not a thing to have two writers for.
+# ─────────────────────────────────────────────────────────────────────────────────────────────

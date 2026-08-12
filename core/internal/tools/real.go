@@ -22,9 +22,9 @@ import (
 
 // Real shells out to the tools SPEC §3 verified, and talks to the iTunes lookup API.
 type Real struct {
-	// MuxAddr is quince's netmuxd, exported to every device call as
-	// USBMUXD_SOCKET_ADDRESS. springback never runs a muxer of its own: quince's container
-	// already runs usbmuxd, and a second daemon fights it for the USB bus (SPEC §2).
+	// MuxAddr is the muxer to use, exported to every device call as
+	// USBMUXD_SOCKET_ADDRESS. springback never runs a muxer of its own: the host's usbmuxd
+	// already owns the USB bus, and a second daemon fights it for the devices (SPEC §2).
 	MuxAddr string
 	// HTTP is the client used for the lookup API only.
 	HTTP *http.Client
@@ -36,8 +36,8 @@ type Real struct {
 	DownloadTimeout time.Duration
 	// InstallTimeout bounds one install, which is slower than a download.
 	InstallTimeout time.Duration
-	// LockdownDir holds the pairing records, mounted READ-ONLY from quince's container
-	// (SPEC §2). springback only ever lists it.
+	// LockdownDir holds the pairing records. Mounted read-write when springback pairs devices
+	// itself, and read-only when another tool on the host owns them (SPEC §2).
 	LockdownDir string
 	// Debug, when set, receives each auth attempt's raw output — ANSI stripped and with the
 	// password scrubbed out.
@@ -90,16 +90,25 @@ func (r *Real) run(ctx context.Context, timeout time.Duration, env []string, std
 	return out, nil
 }
 
-// deviceEnv is the one variable every device call needs (SPEC §2).
+// deviceEnv points the libimobiledevice tools at the muxer.
+//
+// EMPTY MEANS "DON'T SAY", not "say nothing". With no MuxAddr configured the variable is left
+// off the child's environment entirely, so libusbmuxd falls back to its own default — the unix
+// socket at /var/run/usbmuxd, which is what a plain `usbmuxd` on the host provides and the
+// simplest way to run this. Setting the variable to an empty string instead would override that
+// default with nothing and break every device call.
 func (r *Real) deviceEnv() []string {
+	if r.MuxAddr == "" {
+		return nil
+	}
 	return []string{"USBMUXD_SOCKET_ADDRESS=" + r.MuxAddr}
 }
 
 // ListDeviceUDIDs returns everything the muxer can currently see, over either transport.
 //
-// BOTH TRANSPORTS, WHICH IS A CHANGE. It used to ask only `idevice_id -n`, because quince owned
-// the USB bus and springback's whole job arrived over netmuxd. Standing alone, the device a user
-// has just plugged in to pair is on USB and nowhere else — asking only about the network would
+// BOTH TRANSPORTS, WHICH IS A CHANGE. It used to ask only `idevice_id -n`, because another tool
+// owned the USB bus and springback's whole job arrived over netmuxd. Standing alone, the device
+// someone has just plugged in to pair is on USB and nowhere else — asking only the network would
 // show them an empty screen and no way out of it.
 //
 // The transport each device answered on is remembered, because every other CLI needs to be told:

@@ -165,7 +165,7 @@ type Tools interface {
 	// about a device that is not currently answering, so without the pairing records the
 	// Devices screen would silently shrink to whatever happens to be awake — which is the
 	// "gone" reading SPEC §3 forbids. The records are mounted READ-ONLY: springback is a
-	// day-old tool and must not be able to corrupt the pairing state quince depends on.
+	// small tool and must not be able to corrupt pairing state another tool on the box depends on.
 	PairedUDIDs(ctx context.Context) ([]string, error)
 	// DeviceValue reads one lockdown key, e.g. DeviceName or RegionInfo.
 	DeviceValue(ctx context.Context, udid, key string) (string, error)

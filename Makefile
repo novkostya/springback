@@ -5,9 +5,9 @@
 # dev and the release image compile with identical toolchains. All pins live in versions.env.
 #
 # Requirements on the box: `make` + a container runtime (nerdctl or docker) with buildkit.
-# The convention is quince's, and it is deliberate: the two projects share a host and a runner,
-# and a second, differently-shaped build system on the same box is a tax on whoever has to
-# operate both. It is the only thing springback borrows from quince (SPEC header).
+# Containerised gates are deliberate: the box that builds this needs `make` and a container
+# runtime and nothing else — no Go, no linter, no version manager to keep in step with CI.
+# The pins in versions.env are the single source of truth for both.
 
 include versions.env
 
@@ -20,7 +20,7 @@ TC_GO       := springback-toolchain-go:$(IMAGE_TAG)
 
 # Named cache volumes — persistent across runs, safe to lose. They are what keep the
 # containerized gates fast. Both are safe for concurrent writers: Go's build and module caches
-# lock. Named for springback so they never collide with quince's on the shared runner.
+# lock. Named for springback so they never collide with another project's on a shared box.
 GO_BUILD_VOL := springback-go-build
 GO_MOD_VOL   := springback-go-mod
 
@@ -86,7 +86,7 @@ image: preflight ## Build the production container (proves go:embed of the stati
 # device fixtures carry a genuinely-delisted app and a not-sold-in-this-storefront app, which are
 # the two cases the Devices screen exists to tell apart.
 # ---------------------------------------------------------------------------
-# THE PORT IS TRIED, NOT ASSUMED. This runner is shared — quince's demo containers allocate host
+# THE PORT IS TRIED, NOT ASSUMED. A dev box may already have something on this port, so
 # ports on it, and 8971 was already taken by one the first time this target ran. A fixed port
 # turns "somebody else is demoing" into a failed build for a reason that has nothing to do with
 # the change being tested, so walk upwards until one binds.
@@ -110,9 +110,9 @@ dev: image ## Serve this branch with the fake tool layer (no hardware needed)
 	done; \
 	echo "dev: could not bind a port in 10 tries from $(DEV_PORT)"; exit 1
 
-# The CONVENTION NAME this box is known by, not `hostname` — the address a demo is served on is
-# not something to paste into a shared channel. Override when serving from somewhere else.
-DEMO_HOST ?= quince-runner
+# The name to print for the dev server. Deliberately not `hostname`: the address a dev box is
+# reachable at is not something to bake into a repo. Override when serving from elsewhere.
+DEMO_HOST ?= localhost
 
 .PHONY: dev-stop
 dev-stop: ## Remove the dev container

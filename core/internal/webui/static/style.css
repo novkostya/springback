@@ -382,7 +382,7 @@ label { display: block; font-size: 12px; color: var(--dim); }
    iOS Safari zooms the whole page in when a focused control computes below 16px: WebKit's target
    scale is `16 / fontSize`, so a 13px field was a 1.23x zoom and a re-scroll on every tap — on the
    Apple-ID password field, the 2FA code field and the App Store id field, which are the only text
-   inputs this app has. quince hit the identical bug and ruled on it (quince#616); this is the same
+   inputs this app has. the identical bug has been measured elsewhere; this is the same
    fix in plain CSS.
 
    DO NOT "fix" this in the viewport meta instead. `maximum-scale=1` / `user-scalable=no` also

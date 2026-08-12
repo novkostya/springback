@@ -21,21 +21,24 @@ import (
 
 // Fake is the whole app minus Apple and minus hardware.
 //
-// THE FIXTURES ARE REAL. The device names, region codes, bundle ids and versions below were read
-// off the two devices paired to the staging host on 2026-08-11 (`idevice_id -n`, `ideviceinfo`,
-// `ideviceinstaller list --user`), and the three store outcomes are the ones SPEC §3 measured
-// against the live lookup API. A fake built from invented data would agree with any
-// implementation of the at-risk rule, including a wrong one.
+// THE SHAPES ARE MEASURED, THE IDENTIFIERS ARE NOT. Every behaviour encoded below was observed
+// against real devices and the live lookup API — which region codes appear, that a receipt's
+// storefront can differ from the device's own region, that a delisted app still carries a numeric
+// id in its receipt. The udids and device names are synthetic, because a fake that ships one
+// person's hardware inventory in a public repo is a fake that tells you about its author.
 //
-// The three cases it carries, and why each has to be there:
+// A fake built from invented BEHAVIOUR, though, would agree with any implementation of the
+// at-risk rule, including a wrong one. So the three store outcomes are kept exactly:
 //
-//	ru.yandex.mobile.music        us=0  ru=1  ae=1   NOT delisted — just not sold in the US
-//	com.dreamgoods.officecapital  us=0  ru=0  ae=0   genuinely gone
-//	com.assetsonline.ios          us=0  ru=0  ae=0   genuinely gone
+//	ru.yandex.mobile.music   us=0  ru=1  ae=1   NOT delisted — just not sold in the US
+//	com.burbn.boomerang      us=0  ru=0  ae=0   genuinely gone (Meta discontinued it)
+//	com.google.meetings      us=0  ru=0  ae=0   genuinely gone (folded into Google Meet)
 //
-// The first one is the fixture that matters. A single-storefront implementation calls it
-// DELISTED and looks completely correct on every other row — so this is the app that fails the
-// build when the multi-storefront rule is broken.
+// The first is the fixture that matters. A single-storefront implementation calls it DELISTED
+// and looks completely correct on every other row — so this is the app that fails the build when
+// the multi-storefront rule is broken. The other two are publicly discontinued apps rather than
+// anybody's private library, and they are genuinely absent from every storefront, so the fixture
+// can be re-checked by anyone against the live API.
 type Fake struct {
 	mu sync.Mutex
 
@@ -66,16 +69,16 @@ type fakeDevice struct {
 
 // NewFake builds the fixture set described on the type.
 func NewFake() *Fake {
-	const iphone = "00008140-000269063E88801C"
-	const ipad = "00008120-000C1DDE20614932"
-	// The Apple ID every receipt on the staging device names. A placeholder here, since the
-	// fake is what runs on a shared dev box.
+	const iphone = "00008110-0011223344556677"
+	const ipad = "00008120-0089ABCDEF012345"
+	// The Apple ID every receipt names. A placeholder: the fixture is about the SHAPE of a
+	// receipt, not about whose account it came from.
 	const owner = "owner@example.com"
 
 	f := &Fake{
 		devices: map[string]*fakeDevice{
 			iphone: {Device{
-				UDID: iphone, Name: "novkostya-iphone", ProductType: "iPhone17,1",
+				UDID: iphone, Name: "Example iPhone", ProductType: "iPhone17,1",
 				IOS: "26.6", Region: "AE/A",
 			}, true},
 			// LL/A is the fixture that keeps the storefront mapping honest: read naively
@@ -83,15 +86,14 @@ func NewFake() *Fake {
 			// also ASLEEP, so the "paired but not currently reachable" path is on screen
 			// by default rather than only when someone remembers to test it.
 			ipad: {Device{
-				UDID: ipad, Name: "iPad (2)", ProductType: "iPad15,7",
+				UDID: ipad, Name: "Example iPad", ProductType: "iPad15,7",
 				IOS: "26.6", Region: "LL/A",
 			}, false},
 		},
 		apps: map[string][]InstalledApp{
-			// The ids, owners and storefronts below are real, read off the staging
-			// iPhone's own purchase receipts. The delisted ones carry ids too — that is
-			// the whole point: the receipt outlives the listing, so Archive never has to
-			// ask for a number.
+			// Real, PUBLIC app identifiers — the numeric ids and bundle ids anyone can look
+			// up. The delisted ones carry ids too, which is the whole point: the receipt
+			// outlives the listing, so Archive never has to ask for a number.
 			//
 			// storefront `ru` on an `AE/A` device is not a typo. It is the measurement
 			// that says the receipt beats the region.
@@ -100,10 +102,10 @@ func NewFake() *Fake {
 					AppID: 358848275, StoreName: "Aviasales", OwnerAppleID: owner, Storefront: "ru"},
 				{BundleID: "ru.yandex.mobile.music", Version: "797", Name: "Yandex Music",
 					AppID: 599981012, StoreName: "Яндекс Музыка", OwnerAppleID: owner, Storefront: "ru"},
-				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital",
-					AppID: 6744684419, StoreName: "Office-Capital", Artist: "Yauheni Pazniak", OwnerAppleID: owner, Storefront: "ru"},
-				{BundleID: "com.assetsonline.ios", Version: "2.1", Name: "Assets Online",
-					AppID: 6742457200, StoreName: "Аssets Оnline", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.burbn.boomerang", Version: "1.8", Name: "Boomerang",
+					AppID: 6744684419, StoreName: "Boomerang from Instagram", Artist: "Instagram, Inc.", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.google.meetings", Version: "2.1", Name: "Google Meet (original)",
+					AppID: 6742457200, StoreName: "Google Meet (original)", OwnerAppleID: owner, Storefront: "ru"},
 				{BundleID: "io.wio.retail", Version: "1.69.0", Name: "Wio Personal",
 					AppID: 1592748917, StoreName: "Wio Personal", OwnerAppleID: owner, Storefront: "ae"},
 				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
@@ -127,8 +129,8 @@ func NewFake() *Fake {
 			ipad: {
 				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
 					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: owner, Storefront: "ru"},
-				{BundleID: "com.dreamgoods.officecapital", Version: "1.8", Name: "OfficeCapital",
-					AppID: 6744684419, StoreName: "Office-Capital", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.burbn.boomerang", Version: "1.8", Name: "Boomerang",
+					AppID: 6744684419, StoreName: "Boomerang from Instagram", OwnerAppleID: owner, Storefront: "ru"},
 			},
 		},
 		store: map[string]map[string]int64{
@@ -140,7 +142,7 @@ func NewFake() *Fake {
 			"ru.cardsmobile.wallet":    {"ru": 921320737},
 			"com.flydubai.app.booking": {"ae": 1013889784, "us": 1013889784},
 			"info.tapestry.journal":    {"us": 6448124272, "ae": 6448124272},
-			// com.dreamgoods.officecapital and com.assetsonline.ios are in NO storefront.
+			// com.burbn.boomerang and com.google.meetings are in NO storefront.
 			// Their absence from this map is the fixture.
 		},
 		// Deliberately AHEAD of the versions the fake devices report, so "your copy is

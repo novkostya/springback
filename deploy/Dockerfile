@@ -3,9 +3,9 @@
 # compile with byte-identical toolchains. All pins come from versions.env via --build-arg
 # (defaults below mirror it).
 #
-# NOT a quince image and not derived from one. Shares a host and a netmuxd; shares no name, no
-# repo, no process (SPEC header). The overlap in base image and Apple userland is because both
-# talk to the same devices, not because one is built from the other.
+# The image carries Apple's userland (libimobiledevice + ideviceinstaller) and ipatool, because
+# springback shells out to all of them. It deliberately does NOT carry usbmuxd — see the runtime
+# stage for why.
 
 # ---- pinned base images (mirror versions.env) — ONE Alpine line (3.24) everywhere ----
 ARG GO_IMAGE=golang:1.26.5-alpine3.24
@@ -92,15 +92,15 @@ RUN CGO_ENABLED=0 go build -trimpath \
 # Runtime — Alpine + the Apple userland springback shells out to.
 # =============================================================================
 FROM ${ALPINE_IMAGE} AS runtime
-# THERE IS NO usbmuxd HERE, AND ITS ABSENCE IS THE POINT (SPEC §2). quince's container already
-# runs one; a second daemon fights it for the USB bus. springback never touches USB — every
-# device call goes over quince's netmuxd on 127.0.0.1:27015, set by USBMUXD_SOCKET_ADDRESS.
+# THERE IS NO usbmuxd HERE, AND ITS ABSENCE IS THE POINT (SPEC §2). The HOST runs one and owns
+# the USB bus; a second daemon inside a container fights it for the same devices. springback
+# reaches devices through the host's muxer socket, or over netmuxd via USBMUXD_SOCKET_ADDRESS.
 # Installing the package "just in case" would put a startable competitor inside the image, and
-# the failure it causes lands on quince rather than here.
+# the failure it causes lands on whatever else is managing the devices.
 #
 #   libimobiledevice-progs = idevice_id + ideviceinfo (Alpine 3.24 ships 1.4.0). springback needs
-#                            no patched build: it reads device name/region and lists udids, none
-#                            of which quince's in-tree patches touch.
+#                            no patched build: it reads device name/region and lists udids.
+#
 #   libzip                 = runtime link dep of the ideviceinstaller built above.
 #   ca-certificates        = TLS for the iTunes lookup API and ipatool's Store calls.
 RUN apk add --no-cache \
@@ -120,10 +120,9 @@ COPY --from=core-build /springback /usr/local/bin/springback
 
 ENV SPRINGBACK_LIBRARY=/library \
     SPRINGBACK_ACCOUNTS=/accounts \
-    SPRINGBACK_LISTEN=:8971 \
-    USBMUXD_SOCKET_ADDRESS=127.0.0.1:27015
+    SPRINGBACK_LISTEN=:8971
 
-# THE IMAGE MUST CONTAIN THE DIRECTORIES IT DECLARES — quince learned this on a deployment with
+# THE IMAGE MUST CONTAIN THE DIRECTORIES IT DECLARES — learned on a deployment with
 # no mounts, where the binary died on an errno naming neither the missing directory nor the
 # variable that pointed at it. Both paths are bind-mounted in every real deployment, which is
 # exactly why the defaults would otherwise be dead config that reads as live.

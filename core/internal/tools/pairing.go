@@ -1,16 +1,16 @@
 package tools
 
-// Pairing and Wi-Fi sync — what springback needs in order to run without quince next door.
+// Pairing and Wi-Fi sync — what springback needs in order to stand on its own.
 //
-// Up to now springback READ the pairing records quince wrote and mounted them read-only, which
-// was right while quince owned the devices: a day-old tool has no business corrupting the pairing
+// Up to now springback READ pairing records another tool wrote, mounted read-only, which
+// was right while that tool owned the devices: a small tool has no business corrupting pairing
 // state another one depends on. Standing alone, nothing else is going to pair a device, so it has
 // to do it itself.
 //
 // STILL NO usbmuxd IN THE IMAGE. Pairing needs USB, and a muxer inside the container would fight
 // whatever is already on the host bus for it. The documented deployment runs usbmuxd (or netmuxd)
-// on the host and points springback at it, which is the same arrangement as before — only now the
-// thing on the other end does not have to be quince.
+// on the host and points springback at it — the same arrangement as before, except that what is
+// on the other end no longer has to be somebody else's tool.
 
 import (
 	"context"
