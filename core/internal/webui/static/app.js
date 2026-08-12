@@ -203,6 +203,27 @@ $("#sign-out").onclick = async () => {
   location.href = "/";
 };
 
+// FLASH IS A TOAST THAT SURVIVES A PAGE LOAD. Reloading is sometimes the right way to finish an
+// action (see the Apple ID sign-in), and the message about what just happened is exactly what a
+// reload throws away — leaving the user looking at a page that reloaded for no visible reason.
+//
+// sessionStorage rather than a query parameter: it is not worth putting in the URL, where it would
+// be re-shown by a back button and kept by anyone who copied the link.
+const FLASH_KEY = "springback:flash";
+
+function flash(msg) {
+  try { sessionStorage.setItem(FLASH_KEY, msg); } catch { toast(msg); }
+}
+
+function showFlash() {
+  let msg = null;
+  try {
+    msg = sessionStorage.getItem(FLASH_KEY);
+    sessionStorage.removeItem(FLASH_KEY);
+  } catch { /* private mode, or storage refused: there is simply no message */ }
+  if (msg) toast(msg);
+}
+
 let toastTimer;
 // AN ERROR STAYS UNTIL IT IS DISMISSED; a success goes on its own.
 //
@@ -1990,18 +2011,34 @@ $("#signin").addEventListener("submit", async (ev) => {
     } else {
       await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
     }
-    toast(`Signed in as ${email}.`);
-    // THE WHOLE FORM GOES, NOT JUST THE PASSWORD. The account is in the list above by the time
-    // this returns, and an address still sitting in a box headed "Add an Apple ID" reads as an
-    // attempt that has not landed — reported against a sign-in that had in fact succeeded, with
-    // the manager's autofill highlight still on the field to make it look live.
+    // THE FORM GOES, AND SO DOES THE PAGE. Clearing the fields by script leaves the browser
+    // holding a password it was never told the fate of: Safari decides whether to offer to save
+    // one by watching for the navigation that normally follows a login, and with no navigation it
+    // asks eventually — at whatever unrelated moment the next one happens, long after the screen
+    // that would have explained what it is asking about. Reloading here puts the question where
+    // its answer is obvious.
+    //
+    // It settles the form for good, too. Emptying two inputs relies on knowing every piece of
+    // state a sign-in can leave behind, and the last bug here was one that was missed; a new
+    // document has none of it by construction.
+    //
+    // THE MESSAGE HAS TO OUTLIVE THE RELOAD, or this is a page that reloads itself and never says
+    // why.
+    flash(`Signed in as ${email}.`);
+    // Still cleared before going, because a reload is not instant and the fields are on screen
+    // until it lands — and if it were ever prevented, this is what the user is left looking at.
     resetSignin();
     emailEl.value = "";
     // The next attempt is a new one: whether ITS password was typed or filled has not been
     // observed yet, and a flag left over from this one would misjudge it.
     delete passEl.dataset.typed;
-    await refreshAccounts();
-    renderAccountsList();
+    // `leaving` stops the router and the session watcher treating the teardown as a fault to
+    // recover from, exactly as on sign-out, and the socket is closed rather than left to
+    // reconnect into a document that is going away.
+    leaving = true;
+    dropLive();
+    location.reload();
+    return;
   } catch (e) {
     if (e.kind === "needs_2fa") {
       pendingSlug = e.body.slug;
@@ -2174,6 +2211,11 @@ function dropLive() {
 async function boot() {
   if (booted) return;
   booted = true;
+
+  // Before anything is fetched: a message left by the action that caused this load is about
+  // something that has already happened, and making it wait on a device scan would have it arrive
+  // seconds after the screen it refers to.
+  showFlash();
 
   try {
     const health = await api("/api/health");
