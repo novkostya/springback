@@ -1548,14 +1548,21 @@ function appIcon(id, name, size, version) {
   return iconTile(`lib:${id}`, name, size, `/api/library/${id}/icon.png${v}`);
 }
 
-// deviceIcon is the icon the DEVICE draws for an app it has installed.
+// deviceIcon is the best picture there is for an app INSTALLED ON A DEVICE. The device answers
+// first; the server falls back to the archive and then to the store when what the device sent was
+// its generic tile, or nothing.
 //
-// This is the source that covers what the library cannot: an app that is delisted and has never
-// been archived exists in no store and in no .ipa here, so the phone holding it is the only thing
-// left that still has the picture.
+// ICON_RULE IS A CACHE BUSTER AND HAS TO BE BUMPED WHENEVER THAT FALLBACK ORDER CHANGES. The
+// response is deliberately cached for a week and marked immutable — a device list is two hundred
+// images — so a browser that once got the grey placeholder under this URL would go on drawing it
+// long after the server learned a better answer. The version in the URL cannot help: the app did
+// not change, the rule did. Bumping this is a new URL and therefore a new question.
+const ICON_RULE = "2"; // 2: archive, then store, then the device's tile.
+
 function deviceIcon(udid, bundleID, version, name, size) {
   if (!udid || !bundleID) return iconTile("dev:0", name, size, null);
-  const q = `?bundle=${encodeURIComponent(bundleID)}&v=${encodeURIComponent(version || "")}`;
+  const q = `?bundle=${encodeURIComponent(bundleID)}&v=${encodeURIComponent(version || "")}` +
+    `&rule=${ICON_RULE}`;
   return iconTile(`dev:${udid}:${bundleID}`, name, size,
     `/api/devices/${encodeURIComponent(udid)}/icon.png${q}`);
 }

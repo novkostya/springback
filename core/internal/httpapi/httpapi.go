@@ -250,15 +250,17 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 
 	// THE DEVICE'S GENERIC TILE IS THE LAST RESORT, NOT THE FIRST ANSWER. SpringBoard sends one
 	// picture for every app it has not rendered, so those rows all drew the same grey square and
-	// named nothing. The store has the real artwork for anything still listed, and springback
-	// has already asked the store about this app to decide whether it is delisted — so this
-	// costs a cache lookup, not a round trip.
+	// named nothing.
 	//
-	// A delisted app has no listing and therefore no artwork, which is why the tile is kept
-	// rather than discarded: for those apps it is the only picture that exists.
-	if err == nil && s.StoreIcons != nil && s.DeviceIcons.IsGeneric(udid, bundle, version) {
-		if art, aerr := s.StoreIcons.Get(r.Context(), bundle, s.artworkURL(r.Context(), bundle)); aerr == nil {
-			b = art
+	// The same goes for having no icon at all: a device that answers nothing for an app is not a
+	// reason to draw nothing, if this box is holding that app's artwork on disk.
+	//
+	// A delisted app that has never been archived reaches neither source, which is why the tile
+	// is kept rather than discarded: for those apps it is the only picture that exists.
+	fallback := false
+	if err != nil || s.DeviceIcons.IsGeneric(udid, bundle, version) {
+		if alt, ok := s.betterThanGeneric(r.Context(), bundle); ok {
+			b, err, fallback = alt, nil, true
 		}
 	}
 
@@ -276,8 +278,12 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 	// new URL. That makes the response genuinely immutable, which matters here more than
 	// anywhere else in the app — a device list is two hundred images and the phone should
 	// re-fetch none of them on the second visit.
+	//
+	// EXCEPT WHEN THE ANSWER DID NOT COME FROM THE DEVICE. A fallback picture can change under a
+	// fixed version — archiving the app is exactly what makes one appear — so promising a week of
+	// immutability would hide the better icon the user just created.
 	w.Header().Set("Content-Type", "image/png")
-	if version != "" {
+	if version != "" && !fallback {
 		w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "private, max-age=60, must-revalidate")
@@ -296,6 +302,38 @@ type installReq struct {
 // whether it is delisted, and the resolver keeps those answers — so this is a map lookup on the
 // path that matters. It only reaches the network for an app nobody has judged yet, and an empty
 // answer is the normal one for a delisted app rather than a failure.
+// betterThanGeneric finds a real picture for an app the device only has a placeholder for — or no
+// picture for at all.
+//
+// THE ARCHIVE COMES FIRST, and that ordering is the whole point rather than a preference. A
+// delisted app has no listing and so no store artwork, so for the app that was reported — Clips,
+// delisted, archived, drawn as a grey grid on the device list while the library list two taps away
+// drew its real icon — the store branch cannot help and the .ipa on this disk can. It is also the
+// artwork of the exact build that was downloaded, and it is what every other screen already shows,
+// so preferring it is what stops the three places disagreeing.
+//
+// Reading the library index per icon is a directory listing and a few small JSON files, and it
+// only happens for apps the device could not draw: on the device measured, fourteen of them.
+func (s *Server) betterThanGeneric(ctx context.Context, bundleID string) ([]byte, bool) {
+	if s.Library != nil {
+		if ids, err := s.Library.BundleIDs(); err == nil {
+			if id, ok := ids[bundleID]; ok {
+				if b, err := s.Library.Icon(id); err == nil && len(b) > 0 {
+					return b, true
+				}
+			}
+		}
+	}
+	// Nothing archived, so ask the store — which springback has already asked about this app to
+	// decide whether it is delisted, making this a cache lookup rather than a round trip.
+	if s.StoreIcons != nil {
+		if art, err := s.StoreIcons.Get(ctx, bundleID, s.artworkURL(ctx, bundleID)); err == nil && len(art) > 0 {
+			return art, true
+		}
+	}
+	return nil, false
+}
+
 func (s *Server) artworkURL(ctx context.Context, bundleID string) string {
 	if s.Resolver == nil {
 		return ""
