@@ -111,10 +111,23 @@ $("#gate-form").onsubmit = async (ev) => {
   }
 };
 
+// leaving suppresses the router for the one navigation that is meant to LEAVE.
+//
+// The navigate handler intercepts every same-origin navigation, which is right for every link in
+// the app and wrong for exactly one thing: signing out. `location.href = "/"` was being turned
+// into an in-page route change to the Devices screen, so the document — and every device, app
+// and account already in memory — survived. What the user saw was Devices for a couple of
+// seconds, then the login form, once a poll happened to hit a 401.
+let leaving = false;
+
 $("#sign-out").onclick = async () => {
+  // Up FIRST, before any await. Whatever happens next, the screen must not still be showing
+  // somebody's devices while a request is in flight.
+  showGate("needs_login");
   try { await api("/api/auth/logout", { method: "POST" }); } catch { /* going anyway */ }
-  // A full reload rather than showing the gate in place: it drops every scrap of device,
-  // library and account data already rendered, which is the point of signing out.
+  // Then a real reload rather than a route change: dropping every scrap of data already
+  // rendered is the point of signing out, and only a new document guarantees it.
+  leaving = true;
   location.href = "/";
 };
 
@@ -1390,7 +1403,9 @@ function navigate(path) {
 
 if (window.navigation && typeof window.navigation.addEventListener === "function") {
   window.navigation.addEventListener("navigate", (ev) => {
-    if (!ev.canIntercept || ev.hashChange || ev.downloadRequest !== null) return;
+    // `leaving` is the sign-out case: that navigation must be allowed to throw the document
+    // away rather than being turned into a route change. See #sign-out.
+    if (leaving || !ev.canIntercept || ev.hashChange || ev.downloadRequest !== null) return;
     const url = new URL(ev.destination.url);
     if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
 
