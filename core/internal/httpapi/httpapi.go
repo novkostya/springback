@@ -257,10 +257,13 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 	//
 	// A delisted app that has never been archived reaches neither source, which is why the tile
 	// is kept rather than discarded: for those apps it is the only picture that exists.
-	fallback := false
-	if err != nil || s.DeviceIcons.IsGeneric(udid, bundle, version) {
+	// SETTLED is the device's own artwork for this exact version: the one answer that cannot
+	// change while the URL does not. Everything else — a placeholder, a fallback, nothing at all
+	// — is provisional, and the caching below turns on precisely that distinction.
+	settled := err == nil && !s.DeviceIcons.IsGeneric(udid, bundle, version)
+	if !settled {
 		if alt, ok := s.betterThanGeneric(r.Context(), bundle); ok {
-			b, err, fallback = alt, nil, true
+			b, err = alt, nil
 		}
 	}
 
@@ -279,11 +282,12 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 	// anywhere else in the app — a device list is two hundred images and the phone should
 	// re-fetch none of them on the second visit.
 	//
-	// EXCEPT WHEN THE ANSWER DID NOT COME FROM THE DEVICE. A fallback picture can change under a
-	// fixed version — archiving the app is exactly what makes one appear — so promising a week of
-	// immutability would hide the better icon the user just created.
+	// EXCEPT WHEN THE ANSWER IS PROVISIONAL, and a week is a long time to be wrong for. Archiving
+	// the app is exactly what makes a better picture exist, and a placeholder promised as
+	// immutable is a grey square that outlives every fix for it — which is how the reported one
+	// survived a server that had held the real icon for twelve hours.
 	w.Header().Set("Content-Type", "image/png")
-	if version != "" && !fallback {
+	if version != "" && settled {
 		w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
 	} else {
 		w.Header().Set("Cache-Control", "private, max-age=60, must-revalidate")
