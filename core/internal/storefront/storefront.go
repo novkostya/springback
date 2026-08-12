@@ -82,9 +82,13 @@ type Result struct {
 	Version string `json:"version,omitempty"`
 	// FileSize is the download size the store reports, in bytes. Zero for a delisted app —
 	// there is no store record to carry one.
-	FileSize int64    `json:"file_size,omitempty"`
-	Checked  []string `json:"checked"`
-	Errors   []string `json:"errors,omitempty"`
+	FileSize int64 `json:"file_size,omitempty"`
+	// ArtworkURL is the store's icon, and it is here because some apps have no other picture:
+	// a device hands back a generic tile for anything SpringBoard has not rendered. Empty for
+	// a delisted app, which has no listing to carry artwork.
+	ArtworkURL string   `json:"artwork_url,omitempty"`
+	Checked    []string `json:"checked"`
+	Errors     []string `json:"errors,omitempty"`
 }
 
 // appleRegion maps an Apple part-number region code onto an iTunes storefront.
@@ -321,6 +325,7 @@ func (r *Resolver) query(ctx context.Context, bundleID string, fronts []string) 
 				res.TrackID = l.TrackID
 				res.Version = l.Version
 				res.FileSize = l.FileSize
+				res.ArtworkURL = l.ArtworkURL
 			}
 		}
 	}

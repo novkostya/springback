@@ -298,9 +298,18 @@ func TestDeviceReturnsTheSamePictureForSeveralApps(t *testing.T) {
 	} else if string(got) != "a genuine icon" {
 		t.Errorf("got %q", got)
 	}
+	if d.IsGeneric("UDID", "com.real.one", "1") {
+		t.Error("a genuine icon was marked as the device's generic tile")
+	}
+
+	// KEPT, AND MARKED. The tile is still the only picture a delisted app has, so it is not
+	// thrown away — the mark is what lets the caller reach for the store's artwork first.
 	for _, b := range []string{"com.blank.a", "com.blank.b", "com.blank.c"} {
-		if _, err := d.Get(context.Background(), "UDID", b, "1"); !errors.Is(err, ErrNoDeviceIcon) {
-			t.Errorf("%s served the placeholder: %v", b, err)
+		if _, err := d.Get(context.Background(), "UDID", b, "1"); err != nil {
+			t.Errorf("%s lost the only picture it has: %v", b, err)
+		}
+		if !d.IsGeneric("UDID", b, "1") {
+			t.Errorf("%s was not marked generic, so the store's artwork will never be tried", b)
 		}
 	}
 }
@@ -332,8 +341,9 @@ func TestPlaceholdersAlreadyOnDiskAreDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, b := range []string{"com.blank.a", "com.blank.b"} {
-		if _, err := d.Get(context.Background(), "UDID", b, "1"); !errors.Is(err, ErrNoDeviceIcon) {
-			t.Errorf("%s still serves the cached placeholder: %v", b, err)
+		if !d.IsGeneric("UDID", b, "1") {
+			t.Errorf("%s was cached before the rule existed and is still unmarked, so it "+
+				"will go on being drawn instead of the store's artwork", b)
 		}
 	}
 }

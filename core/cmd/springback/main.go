@@ -97,6 +97,9 @@ func main() {
 	// because Library.List() keys on directory names that parse as numeric App Store ids — so
 	// this one is skipped by the same rule that already skips store-status-cache.json.
 	deviceIcons := store.NewDeviceIcons(filepath.Join(*libraryDir, ".device-icons"), t)
+	// Beside the device icons, and for the same reason they are on disk rather than in memory:
+	// a couple of hundred small pictures that never change.
+	storeIcons := store.NewStoreIcons(*libraryDir, nil)
 	// Last-known device facts, so a phone that is elsewhere still has a name on screen.
 	deviceCache := store.NewDeviceCache(*libraryDir)
 	resolver := storefront.NewResolver(t, *cacheTTL, store.NewStatusCache(*libraryDir))
@@ -108,6 +111,7 @@ func main() {
 		Devices:     &devices.Service{Tools: t, Resolver: resolver, Library: library, Cache: deviceCache},
 		Library:     library,
 		DeviceIcons: deviceIcons,
+		StoreIcons:  storeIcons,
 		Accounts:    accounts,
 		Resolver:    resolver,
 		Jobs:        jobRegistry,

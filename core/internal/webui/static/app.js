@@ -270,10 +270,21 @@ async function applyJobs(list) {
       if (j.state === "done") {
         toast(j.kind === "install" ? `Installed ${j.label}.`
           : `Archived ${j.label}.`);
-        // The library gained an entry, a device's app list may now say "in library",
-        // and an installed-app set is now out of date.
-        appsCache.clear();
-        installedOn.clear();
+        if (j.kind === "install") {
+          // ONLY THE DEVICE THAT WAS WRITTEN TO. Clearing every device's installed set
+          // meant that finishing an install on one phone made every OTHER row forget what
+          // it had, so a list of four devices — three of them already holding the app —
+          // flipped to four Install buttons while it re-checked. Reported: "after the app
+          // is installed to one device it triggers rescan and all cells show Install".
+          //
+          // The key is `install:<library id>:<udid>`, so the udid is in hand.
+          const udid = (j.key || "").split(":")[2];
+          if (udid) { installedOn.delete(udid); appsCache.delete(udid); }
+        } else {
+          // A download changes the LIBRARY, so every device's list may now say "in
+          // library" where it did not. That one really is all of them.
+          appsCache.clear();
+        }
         await refreshLibrary();
       } else {
         toast(`${j.label}: ${j.error}`, true);
@@ -1043,29 +1054,45 @@ function renderAppDetail() {
 function installRow(d, item) {
   const job = jobFor(`install:${item.id}:${d.udid}`);
   const already = installedOn.get(d.udid);
+  // KNOWING NOTHING IS NOT THE SAME AS KNOWING IT IS ABSENT, and conflating them is what put an
+  // Install button on every row while the answer was still being fetched — including rows for
+  // devices that already had the app. `has` is false in both cases; `known` is what tells them
+  // apart. An unreachable device is "known" in the sense that matters: it is not going to be
+  // asked, and its row says offline rather than pretending to be busy.
+  const known = already !== undefined || !d.reachable;
   const installedVersion = already ? already.get(item.bundle_id) : undefined;
   const has = installedVersion !== undefined;
   // NEWER, not merely DIFFERENT. Comparing for inequality offered "21.31.3 → 1.0" as an update,
   // which is a downgrade — iOS refuses it, and proposing it is worse than saying nothing.
   const stale = has && item.version && cmpVersions(item.version, installedVersion) > 0;
 
+  // THE ROW IS NOT THE BUTTON. It used to be: the whole cell was a <button>, so a tap anywhere —
+  // on the device name, on the version, on the empty space beside it — started an install onto
+  // that phone. An install is not something to trigger by brushing a list. Reported.
+  //
+  // So the action is a real button in the row, and it is the only thing that starts anything.
+  let action = null;
   let right;
   if (job) {
     // The progress lives IN THE ROW, next to the device it belongs to — a strip at the top
     // of the page cannot say which of three devices is being written to.
     right = ring(job.percent, job.stage);
-  } else if (has && !stale) {
-    right = el("span", { className: "tick done", textContent: "installed" });
-  } else if (stale && d.reachable) {
-    // The device has an older build than the library copy — offer the update by name.
-    right = el("span", { className: "btn-inline", textContent: "Update" });
   } else if (!d.reachable) {
     right = el("span", { className: "pill offline", textContent: "offline" });
+  } else if (!known) {
+    // Still asking the device what it has. Anything else here is a guess, and the guess it
+    // used to make was "Install" — on every row at once.
+    right = el("span", { className: "hint", textContent: "checking…" });
+  } else if (has && !stale) {
+    right = el("span", { className: "tick done", textContent: "installed" });
   } else {
-    right = el("span", { className: "btn-inline", textContent: "Install" });
+    // Installable: either it is absent, or the library copy is newer than what is on there.
+    action = el("button", { className: "btn-inline", type: "button",
+      textContent: stale ? "Update" : "Install" });
+    right = action;
   }
 
-  const r = el("button", { className: "row" + (job ? " busy" : "") }, [
+  const r = el("div", { className: "row static" + (job ? " busy" : "") }, [
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
@@ -1085,14 +1112,14 @@ function installRow(d, item) {
     el("div", { className: "row-right" }, [right]),
   ]);
 
-  // A stale copy is installable even though the app is present — that IS the update.
-  r.disabled = !d.reachable || !!job || (has && !stale);
-  r.onclick = async () => {
+  if (!action) return r;
+
+  action.onclick = async () => {
     // Disable ON THE WAY IN, before the request is even sent. The reported bug was two taps
     // queuing two downloads, and the round trip is exactly the window a second tap lands in.
     // The server refuses duplicates too — this is the half that stops it feeling broken.
-    if (r.disabled) return;
-    r.disabled = true;
+    if (action.disabled) return;
+    action.disabled = true;
     r.classList.add("busy");
     r.querySelector(".row-right").replaceChildren(ring(-1, "starting…"));
     try {
@@ -1107,7 +1134,7 @@ function installRow(d, item) {
       startedJob();
     } catch (e) {
       toast(e.message, true);
-      r.disabled = false;
+      action.disabled = false;
       r.classList.remove("busy");
       rerenderCurrent();
     }
@@ -1170,8 +1197,14 @@ function loadInstalledSets() {
         installedOn.set(d.udid, new Map(list.map((a) => [a.bundle_id, a.version])));
         if (current === "app") renderAppDetail();
       })
-      .catch(() => { /* a device that stopped answering simply shows Install */ })
-      .finally(() => installedLoading.delete(d.udid));
+      // A device that stopped answering mid-question is recorded as holding nothing, so its
+      // row settles on Install rather than sitting at "checking…" for ever. It is a guess,
+      // and it is the safe one: the server refuses an install to a device that is not there.
+      .catch(() => { if (!installedOn.has(d.udid)) installedOn.set(d.udid, new Map()); })
+      .finally(() => {
+        installedLoading.delete(d.udid);
+        if (current === "app") renderAppDetail();
+      });
   }
 }
 

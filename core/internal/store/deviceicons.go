@@ -86,6 +86,18 @@ func (d *DeviceIcons) missPath(udid, bundleID, version string) string {
 	return filepath.Join(d.dir(udid), safeName(bundleID)+"@"+safeName(version)+".none")
 }
 
+// genericPath marks a cached icon as the device's generic tile rather than the app's own artwork.
+func (d *DeviceIcons) genericPath(udid, bundleID, version string) string {
+	return filepath.Join(d.dir(udid), safeName(bundleID)+"@"+safeName(version)+".generic")
+}
+
+// IsGeneric reports whether the cached icon is the device's placeholder. The caller uses it to
+// decide whether to go looking for the store's artwork first.
+func (d *DeviceIcons) IsGeneric(udid, bundleID, version string) bool {
+	_, err := os.Stat(d.genericPath(udid, bundleID, version))
+	return err == nil
+}
+
 // Get returns one icon, warming the whole device on a miss.
 func (d *DeviceIcons) Get(ctx context.Context, udid, bundleID, version string) ([]byte, error) {
 	if b, err := os.ReadFile(d.path(udid, bundleID, version)); err == nil && len(b) > 0 {
@@ -175,12 +187,19 @@ func (d *DeviceIcons) fetch(ctx context.Context, udid string) error {
 
 	for _, b := range want {
 		png, ok := icons[b]
-		if !ok || len(png) == 0 || placeholder[hashBytes(png)] {
+		if !ok || len(png) == 0 {
 			_ = writeFileAtomic(d.missPath(udid, b, versions[b]), nil, 0o644)
 			continue
 		}
 		if err := writeFileAtomic(d.path(udid, b, versions[b]), png, 0o644); err != nil {
 			return err
+		}
+		// KEPT, BUT MARKED. A placeholder is still the best picture there is for an app with
+		// no store listing — a delisted app has no artwork anywhere else — so it is not thrown
+		// away. The marker lets the caller prefer the store's icon when there is one, and fall
+		// back to this when there is not.
+		if placeholder[hashBytes(png)] {
+			_ = writeFileAtomic(d.genericPath(udid, b, versions[b]), nil, 0o644)
 		}
 		// The previous version's icon is now dead weight. Dropping it here keeps the cache
 		// proportional to what is installed rather than to how often it has been updated.
@@ -234,9 +253,8 @@ func hashBytes(b []byte) string {
 // re-examined, because the whole point of the cache is not to ask again. Runs once per warm and
 // costs a hash of each cached file — a couple of megabytes of small reads.
 //
-// They become misses rather than deletions, so the device is not asked for them again on every
-// warm. A miss is keyed by version, so an app that later has real artwork gets it at its next
-// update.
+// The file is KEPT and marked, not deleted: it is still the only picture a delisted app has. The
+// mark is what lets the caller prefer the store's artwork for everything else.
 func (d *DeviceIcons) dropCachedPlaceholders(udid string) {
 	entries, err := os.ReadDir(d.dir(udid))
 	if err != nil {
@@ -260,11 +278,10 @@ func (d *DeviceIcons) dropCachedPlaceholders(udid string) {
 			continue
 		}
 		for _, name := range names {
-			_ = os.Remove(filepath.Join(d.dir(udid), name))
-			// <bundle>@<version>.png -> the miss marker beside it.
+			// <bundle>@<version>.png -> the marker beside it.
 			stem := strings.TrimSuffix(name, ".png")
 			if i := strings.LastIndex(stem, "@"); i > 0 {
-				_ = writeFileAtomic(d.missPath(udid, stem[:i], stem[i+1:]), nil, 0o644)
+				_ = writeFileAtomic(d.genericPath(udid, stem[:i], stem[i+1:]), nil, 0o644)
 			}
 		}
 	}
@@ -282,7 +299,14 @@ func (d *DeviceIcons) pruneOldVersions(udid, bundleID, keep string) {
 		if !strings.HasPrefix(name, prefix) {
 			continue
 		}
-		stem := strings.TrimSuffix(strings.TrimSuffix(name, ".png"), ".none")
+		// EVERY suffix this cache writes, or pruning deletes the current version's own
+		// markers. Adding `.generic` without adding it here cost exactly that: the marker was
+		// written and removed again a line later, so nothing was ever known to be a
+		// placeholder.
+		stem := name
+		for _, ext := range []string{".png", ".none", ".generic"} {
+			stem = strings.TrimSuffix(stem, ext)
+		}
 		if stem == current {
 			continue
 		}

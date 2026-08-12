@@ -768,6 +768,10 @@ type lookupResponse struct {
 		// A STRING in Apple's JSON, not a number. Decoding it as int64 fails the whole
 		// response, which would have taken the store version and the delisted verdict with it.
 		FileSizeBytes string `json:"fileSizeBytes"`
+		// The store's own artwork, which is the only picture some apps have: a device
+		// returns a generic placeholder for an app it has not rendered.
+		ArtworkURL512 string `json:"artworkUrl512"`
+		ArtworkURL100 string `json:"artworkUrl100"`
 	} `json:"results"`
 	ErrorMessage string `json:"errorMessage"`
 }
@@ -827,6 +831,12 @@ func (r *Real) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		// Unparseable is simply zero: a missing size costs one row on a detail page, and
 		// is not worth failing a lookup that decides whether an app counts as delisted.
 		res.FileSize, _ = strconv.ParseInt(lr.Results[0].FileSizeBytes, 10, 64)
+		// 512 for preference; 100 is the fallback for an old listing that has no large
+		// artwork. Either beats the generic tile a device hands back for an app it has no
+		// picture for.
+		if res.ArtworkURL = lr.Results[0].ArtworkURL512; res.ArtworkURL == "" {
+			res.ArtworkURL = lr.Results[0].ArtworkURL100
+		}
 	}
 	return res
 }

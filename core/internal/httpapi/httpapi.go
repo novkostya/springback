@@ -46,10 +46,13 @@ type Server struct {
 	// DeviceIcons is the cache of icons read off the devices themselves — the only source
 	// that has artwork for a delisted app that has not been archived.
 	DeviceIcons *store.DeviceIcons
-	Accounts    *store.Accounts
-	Resolver    *storefront.Resolver
-	Jobs        *jobs.Registry
-	Log         *slog.Logger
+	// StoreIcons fills the gap the devices leave: an app SpringBoard has not rendered comes
+	// back as a generic tile, and the store has the real picture for anything still listed.
+	StoreIcons *store.StoreIcons
+	Accounts   *store.Accounts
+	Resolver   *storefront.Resolver
+	Jobs       *jobs.Registry
+	Log        *slog.Logger
 	// Fake reports whether the tool layer is the fake one. The UI shows a banner: a screen
 	// full of plausible device names that is not talking to any device would otherwise be
 	// indistinguishable from the real thing.
@@ -244,6 +247,21 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 	}
 
 	b, err := s.DeviceIcons.Get(r.Context(), udid, bundle, version)
+
+	// THE DEVICE'S GENERIC TILE IS THE LAST RESORT, NOT THE FIRST ANSWER. SpringBoard sends one
+	// picture for every app it has not rendered, so those rows all drew the same grey square and
+	// named nothing. The store has the real artwork for anything still listed, and springback
+	// has already asked the store about this app to decide whether it is delisted — so this
+	// costs a cache lookup, not a round trip.
+	//
+	// A delisted app has no listing and therefore no artwork, which is why the tile is kept
+	// rather than discarded: for those apps it is the only picture that exists.
+	if err == nil && s.StoreIcons != nil && s.DeviceIcons.IsGeneric(udid, bundle, version) {
+		if art, aerr := s.StoreIcons.Get(r.Context(), bundle, s.artworkURL(r.Context(), bundle)); aerr == nil {
+			b = art
+		}
+	}
+
 	if err != nil {
 		// Every outcome here is a 404 on purpose. An app with no icon, a device that went to
 		// sleep mid-scroll and a bundle id that no longer exists are all the same thing to
@@ -270,6 +288,19 @@ func (s *Server) deviceIcon(w http.ResponseWriter, r *http.Request) {
 
 type installReq struct {
 	LibraryID int64 `json:"library_id"`
+}
+
+// artworkURL asks the storefront resolver where this app's icon lives.
+//
+// FROM THE CACHE IN PRACTICE. Every app on the device page has already been resolved to decide
+// whether it is delisted, and the resolver keeps those answers — so this is a map lookup on the
+// path that matters. It only reaches the network for an app nobody has judged yet, and an empty
+// answer is the normal one for a delisted app rather than a failure.
+func (s *Server) artworkURL(ctx context.Context, bundleID string) string {
+	if s.Resolver == nil {
+		return ""
+	}
+	return s.Resolver.Resolve(ctx, bundleID, storefront.Storefronts("")).ArtworkURL
 }
 
 func (s *Server) install(w http.ResponseWriter, r *http.Request) {

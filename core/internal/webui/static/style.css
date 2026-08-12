@@ -522,19 +522,28 @@ main { padding-bottom: 96px; }
    PASSIVE status ("reachable", "offline"), so it read as a label rather than a control and got
    tapped twice. A thing you can tap must not look like a thing that merely reports. */
 
+/* A REAL BUTTON, not a span inside a clickable row. The row used to be the button, so a tap
+   anywhere on the cell started an install; now this is the only thing that does. It keeps its own
+   tap target — min-height matches the rest of the app's controls. */
 .btn-inline {
   background: var(--accent);
   color: #1a1108;
+  font: inherit;
   font-weight: 600;
   font-size: 12.5px;
   padding: 7px 14px;
+  min-height: 34px;
+  border: 0;
   border-radius: 7px;
   white-space: nowrap;
+  cursor: pointer;
 }
-.row:hover:not(:disabled) .btn-inline { filter: brightness(1.1); }
-/* A pressed row must acknowledge the tap on the way down, not when the response lands. */
-.row:active:not(:disabled) { background: #2a2422; }
-.row:active:not(:disabled) .btn-inline { transform: scale(0.97); }
+@media (hover: hover) and (pointer: fine) {
+  .btn-inline:hover:not(:disabled) { filter: brightness(1.1); }
+}
+/* Acknowledge the tap on the way down, not when the response lands. */
+.btn-inline:active:not(:disabled) { transform: scale(0.97); }
+.btn-inline:disabled { opacity: 0.55; cursor: default; }
 .row.busy .row-title { color: var(--dim); }
 
 .tick.done { color: #9dbb8a; }

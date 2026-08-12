@@ -119,7 +119,12 @@ type StoreLookup struct {
 	Version string
 	// FileSize is the download size the store reports, in bytes. Zero when unknown — and it
 	// is always zero for a delisted app, which has no store record to ask.
-	FileSize    int64
+	FileSize int64
+	// ArtworkURL is the store's own icon. It matters because it is the ONLY picture for an app
+	// the device will not draw one for: SpringBoard answers with a generic tile rather than
+	// with artwork for anything it has not rendered. Empty for a delisted app — no listing, no
+	// artwork — which is exactly when the device's tile is all there is.
+	ArtworkURL  string
 	ReleaseDate string
 	Err         error
 }
