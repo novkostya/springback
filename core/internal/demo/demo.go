@@ -18,11 +18,61 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 
 	"github.com/novkostya/springback/core/internal/auth"
 	"github.com/novkostya/springback/core/internal/store"
 	"github.com/novkostya/springback/core/internal/tools"
 )
+
+// StateRoot is where a demo instance keeps its library and accounts, and it is NOT the configured
+// paths.
+//
+// THE SWAP IS WHAT MAKES THE WIPE SAFE. Reset deletes whatever it is handed, so pointing this at
+// the ordinary directories would give a reset that appeared to work perfectly — right up to the
+// first person who ran `--public-demo` with their real library mounted to see what the demo looked
+// like, and had their archive deleted for it. Measured before the swap existed: that command wrote
+// a fake Apple ID into a real accounts store and a fake .ipa into a real library.
+//
+// Under /tmp because nothing in any documented deployment mounts it: compose.yml and
+// compose.netmuxd.yml mount /library, /accounts and /var/lib/lockdown, and this is none of them.
+const StateRoot = "/tmp/springback-demo"
+
+// LibraryDir and AccountsDir are the throwaway paths a demo instance runs on.
+func LibraryDir() string  { return filepath.Join(StateRoot, "library") }
+func AccountsDir() string { return filepath.Join(StateRoot, "accounts") }
+
+// Reset throws away everything a previous run left behind. It runs at STARTUP, and that timing is
+// the whole guarantee rather than a tidy-up.
+//
+// The tempting alternative is to let the platform do it: fly resets the rootfs on a cold start, so
+// a machine that stops and starts comes back clean without this. That covers the common case and
+// nothing else. A machine that SUSPENDS resumes without restarting the process; a container that is
+// restarted rather than recreated keeps its filesystem; and `docker run` on somebody's laptop keeps
+// it for as long as they leave the container around. In every one of those the demo comes up
+// looking perfectly fine, serving the last visitor's mess — extra Apple IDs, deleted library items
+// — because seeding is idempotent and idempotent means it leaves what it finds.
+//
+// So the reset is a property of THIS PROCESS. Whatever the platform does, a start is a clean demo.
+//
+// There is deliberately no matching wipe on the way out. A container stop is entitled to be a
+// SIGKILL, so an exit hook is exactly the half a real reset cannot depend on — and with the state
+// under a throwaway path there is nothing left behind worth the false confidence.
+func Reset() error {
+	return reset(StateRoot)
+}
+
+// reset takes the root as an argument so a test can drive the real thing over a temp directory
+// rather than a reimplementation of it — and so no test has to delete a path outside its own.
+func reset(root string) error {
+	// A guard against the one edit that turns this into a catastrophe: root coming from
+	// somewhere else and arriving empty or "/". RemoveAll would carry it out without complaint.
+	if root == "" || filepath.Clean(root) == "/" {
+		return errors.New("refusing to reset the whole filesystem")
+	}
+	return os.RemoveAll(root)
+}
 
 // Password is published, on the login screen and in the README. A demo whose password is a secret
 // is a login form with no way in.

@@ -16,7 +16,7 @@ on it is a fixture, and nothing it does reaches Apple.
 | size | `shared-cpu-1x`, 256 MB |
 | mode | `--public-demo`, which **forces** the fake tool layer |
 | password | `springback-demo`, printed on the login screen |
-| state | none. No volume: the rootfs is the state, and it is thrown away |
+| state | throwaway, under `/tmp/springback-demo`, wiped and re-seeded at every process start |
 | address | `springback-demo.fly.dev` |
 
 ## Deploying it
@@ -37,19 +37,37 @@ publishes its own password, so everything behind that password is reachable by a
 fixtures that is the point. Against the real tools, the same screens sign in to Apple with a
 stranger's typing and install software onto whatever is plugged in.
 
-## Why there is no reset timer
+## The reset belongs to the process
 
-**The platform is the reset.** The demo writes to the container filesystem, and `auto_stop_machines
-= "stop"` terminates the VM when nobody is visiting; the next visitor gets a fresh rootfs and a
-fresh seed. There is no interval to promise and the login screen promises none — "it resets itself"
-is the whole claim, and it is true whenever the machine has slept.
+**A start is a clean demo.** `demo.Reset` deletes `/tmp/springback-demo` before seeding, so
+whatever the last visitor did — extra Apple IDs, a deleted library item — is gone by the time the
+listener opens.
 
-This is also why `fly.toml` says `stop` and never `suspend`: a suspended machine resumes from a
-memory snapshot without restarting the process, so the seed never runs again and whatever the last
-visitor left behind stays.
+Letting the platform do it instead is the tempting version and it covers only one case. fly resets
+the rootfs on a cold start, so a machine that stops and starts comes back clean; a machine that
+*suspends* resumes without restarting the process, a container restarted rather than recreated
+keeps its filesystem, and `docker run` on a laptop keeps it for as long as the container is left
+around. In every one of those the demo comes up looking fine and serving somebody else's mess,
+because seeding is idempotent and idempotent means it leaves what it finds.
 
-**Do not attach a volume.** It would preserve every visitor's mess forever, and nothing inside
-springback could tell.
+Measured, on a container restarted rather than recreated — the case the platform does not cover:
+
+```
+visitor adds an account and deletes the library item
+  ->  demo@example.com, vandal@example.com   library []
+docker restart
+  ->  demo@example.com                       library ["Boomerang from Instagram"]
+```
+
+`fly.toml` still says `stop` rather than `suspend`, because suspend is the one setting that resumes
+service without a process start, and there is no interval to promise: the login screen says "it
+resets itself" and nothing more.
+
+**The state is deliberately not `/library` and `/accounts`.** A wipe is only safe over a directory
+that belongs to the demo. Before the paths were swapped, `--public-demo` with a real library
+mounted wrote a fake Apple ID into the accounts store and a fake .ipa into the archive — measured,
+not imagined, and anybody may run this flag to see what the demo looks like, including on the box
+that holds everything they have saved. Now those mounts are ignored entirely.
 
 ## What the demo is seeded with
 
@@ -106,7 +124,9 @@ The parameters travel inside the stored PHC string, so nothing else has to know.
 ```sh
 make image IMAGE_TAG=demotest
 docker run --rm -p 8979:8971 springback:demotest serve --public-demo
+# Nothing is mounted, and mounting anything would not matter: the demo runs on its own paths.
 ```
 
-Then <http://localhost:8979>, password `springback-demo`. Nothing is mounted, so stopping the
-container is the reset — the same shape fly gives it.
+Then <http://localhost:8979>, password `springback-demo`. Restarting it is the reset, and leaving
+the container in place between runs is fine — the wipe is at startup, so it does not depend on how
+the last one ended.

@@ -72,6 +72,18 @@ func main() {
 	// `-fake` in a deploy file must not be the difference.
 	if *publicDemo {
 		*fake = true
+		// AND IT RUNS ON ITS OWN THROWAWAY PATHS, not the ones it was configured with. The
+		// demo wipes its state at startup, and a wipe is only safe over a directory that
+		// belongs to it: measured before this, `--public-demo` with a real library mounted
+		// wrote a fake Apple ID into the accounts store and a fake .ipa into the archive.
+		// Anybody may run this flag to see what the demo looks like, including on the box
+		// that holds everything they have saved.
+		*libraryDir = demo.LibraryDir()
+		*accountsDir = demo.AccountsDir()
+		if err := demo.Reset(); err != nil {
+			log.Error("cannot clear the demo's previous state", "err", err)
+			os.Exit(1)
+		}
 	}
 
 	var t tools.Tools

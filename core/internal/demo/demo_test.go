@@ -119,6 +119,50 @@ func TestSeedIsIdempotent(t *testing.T) {
 	}
 }
 
+// TestResetThrowsAwayTheLastVisitor is the guarantee the mode is named for. Seeding is idempotent
+// — it leaves what it finds — so without this a container that is restarted rather than recreated,
+// or a fly machine that suspends rather than stops, comes up looking perfectly fine while serving
+// the previous visitor's extra Apple IDs and deleted library items.
+func TestResetThrowsAwayTheLastVisitor(t *testing.T) {
+	root := t.TempDir()
+	junk := filepath.Join(root, "accounts", "somebody-elses")
+	if err := os.MkdirAll(junk, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := reset(root); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if _, err := os.Stat(root); !os.IsNotExist(err) {
+		t.Errorf("the previous run's state survived: %v", err)
+	}
+}
+
+// TestResetRefusesTheFilesystem covers the single edit that turns a reset into a catastrophe: the
+// root arriving empty or "/" from somewhere else. RemoveAll would carry either out in silence.
+func TestResetRefusesTheFilesystem(t *testing.T) {
+	for _, root := range []string{"", "/", "//", "/."} {
+		if err := reset(root); err == nil {
+			t.Errorf("reset(%q) was allowed", root)
+		}
+	}
+}
+
+// TestDemoStateIsNotTheRealState is the safety property behind the wipe: a demo must never run on
+// the directories a real install keeps its archive in, because it deletes them at startup.
+// Measured before the paths were swapped: `--public-demo` with a real library mounted wrote a fake
+// Apple ID into the accounts store and a fake .ipa into the archive.
+func TestDemoStateIsNotTheRealState(t *testing.T) {
+	for _, dir := range []string{LibraryDir(), AccountsDir()} {
+		if dir == "/library" || dir == "/accounts" {
+			t.Errorf("demo state at %q, which is where a real install keeps its data", dir)
+		}
+		if !strings.HasPrefix(dir, StateRoot+"/") {
+			t.Errorf("demo state at %q, outside the throwaway root %q", dir, StateRoot)
+		}
+	}
+}
+
 // TestSeedRefusesTheRealTools is the guard that survives someone editing the deploy file. Seeding
 // signs an Apple ID in and downloads an app; against the real layer that is a made-up password
 // sent to Apple, on an instance that publishes its own password to the world.

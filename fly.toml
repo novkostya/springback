@@ -19,15 +19,11 @@ primary_region = "fra"
   build-target = "runtime"
 
 [env]
-  # The demo writes its library and accounts to the CONTAINER FILESYSTEM, not to a volume, and
-  # that is the whole reset mechanism: fly resets the rootfs on a cold start, so every visitor
-  # after a sleep gets the fixtures back exactly as seeded. A volume here would preserve whatever
-  # the last visitor did to it, forever, with nothing in springback able to notice.
-  #
-  # /library and /accounts are the image's defaults and are repeated only for the reader; the
-  # paths that matter are these two, because they are what must NOT be mounted.
-  SPRINGBACK_LIBRARY = "/library"
-  SPRINGBACK_ACCOUNTS = "/accounts"
+  # NO SPRINGBACK_LIBRARY OR SPRINGBACK_ACCOUNTS HERE, and setting them would do nothing:
+  # --public-demo runs on its own throwaway paths under /tmp and wipes them at startup, so the
+  # reset belongs to the process rather than to this file. That is deliberate — see demo.Reset —
+  # because everything the platform offers instead covers only the case where the machine has
+  # fully stopped.
   SPRINGBACK_LISTEN = ":8971"
 
 # `[processes]` sets CMD; it does NOT replace the image's ENTRYPOINT. So this becomes
@@ -46,12 +42,12 @@ primary_region = "fra"
   # exists, whatever the group is called — flyctl refuses the config without it.
   processes = ["app"]
 
-  # "stop", NEVER "suspend" — the load-bearing line in this file.
+  # "stop", NEVER "suspend".
   #
-  # The demo's reset rests entirely on the seed running at PROCESS START against a fresh rootfs.
+  # The demo wipes and re-seeds at PROCESS START, so the guarantee is "a start is a clean demo".
   # "suspend" restores a Firecracker memory snapshot "without rebooting the OS or restarting your
-  # app", so the seed never runs and whatever the last visitor left stays. "stop" terminates the
-  # VM, which is the cold boot the reset depends on.
+  # app" — the one thing that resumes service without a start, and therefore the one setting under
+  # which a vandalised demo stays vandalised. "stop" terminates the VM.
   auto_stop_machines = "stop"
   auto_start_machines = true
   min_machines_running = 0
