@@ -376,10 +376,16 @@ function renderDevices() {
   ];
 
   if (!devices.length) {
+    // THIS USED TO SAY springback ONLY READS PAIRING RECORDS THIS BOX ALREADY HAD, which was true
+    // of v0.1 and stopped being true when pairing was implemented — leaving the empty screen
+    // telling people to go and pair the device somewhere else first. A device on a cable turns up
+    // here whether or not it is paired, because `idevice_id` lists it either way; pairing is then
+    // a button on its page.
     frag.push(el("p", {
       className: "empty",
       textContent:
-        "No paired devices yet. springback reads the pairing records this box already has.",
+        "No devices yet. Connect an iPhone or iPad with a USB cable and it will appear here — " +
+        "tap it to pair. Devices already paired with this box show up on their own, asleep or not.",
     }));
   }
 

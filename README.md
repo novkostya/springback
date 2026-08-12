@@ -57,9 +57,61 @@ You need a Linux box with Docker, and a cable for the first pairing.
 
 springback does not talk to iPhones by itself — it drives Apple's userland
 ([libimobiledevice](https://github.com/libimobiledevice/libimobiledevice)), and that needs a
-*muxer*: the daemon that owns the USB bus and multiplexes connections to devices. This setup runs
-one, [netmuxd](https://github.com/jkcoxson/netmuxd), in its own container. Nothing is installed on
-the host, and it handles devices on Wi-Fi as well as on the cable.
+*muxer*: the daemon that owns the USB bus and multiplexes connections to devices. springback
+deliberately does not contain one, which leaves you one decision to make first.
+
+### Check whether you already have a muxer
+
+```sh
+test -S /var/run/usbmuxd && echo "yes — there is a muxer socket here"
+systemctl is-enabled usbmuxd 2>/dev/null    # often socket- or udev-activated, so the socket
+                                            # may only appear once a device is plugged in
+```
+
+**Exactly one muxer may own the USB bus, and this is the single thing most likely to waste your
+afternoon.** `usbmuxd` is a dependency of libimobiledevice, so plenty of distributions already
+have it installed and activated on demand, and anything else on the box that manages iPhones
+brought its own. Start a second one alongside it and they fight over the USB interface: whichever
+loses sees the device, fails to claim it, and reports nothing useful.
+
+So — if that command said yes, **pass the socket you already have** rather than starting another:
+
+```yaml
+# compose.yml
+services:
+  springback:
+    image: ghcr.io/novkostya/springback:latest
+    container_name: springback
+    restart: unless-stopped
+    ports:
+      - "8971:8971"
+    volumes:
+      - ./data/library:/library      # the archives — this is the one that grows
+      - ./data/accounts:/accounts    # Apple ID sessions and your password. Back this up.
+      - /var/run/usbmuxd:/var/run/usbmuxd
+      - /var/lib/lockdown:/var/lib/lockdown
+```
+
+That is the whole file, and [`deploy/compose.yml`](deploy/compose.yml) is it with the reasoning
+in comments. Two things you give up: devices only on the cable, never over Wi-Fi — and if another
+tool on the box owns those pairing records, mount them `:ro` and let it keep ownership.
+
+If you have no muxer, install one and this file still works:
+
+```sh
+# Debian/Ubuntu: apt install usbmuxd  ·  Arch: pacman -S usbmuxd  ·  Alpine: apk add usbmuxd
+sudo systemctl enable --now usbmuxd
+```
+
+### Or run one in a container, and get Wi-Fi devices too
+
+If the check above said nothing, there is a second option:
+[netmuxd](https://github.com/jkcoxson/netmuxd) in its own container. Nothing is installed on the
+host, and it reaches devices over Wi-Fi as well as on the cable — which is what makes a phone in
+your pocket answer.
+
+**Only do this if nothing else on the box is already a muxer.** netmuxd and usbmuxd running at the
+same time is the fight described above, and netmuxd is usually the one that loses.
 
 Grab [`deploy/compose.netmuxd.yml`](deploy/compose.netmuxd.yml) — it is commented with the
 reasoning — or start from this:
@@ -132,22 +184,7 @@ at. With no record it discovers every device on the network and serves none of t
 anything. There is no option to disable it. Nothing can happen without someone tapping the phone,
 and pairing is what you plugged it in for — but it does mean springback's own **Pair** button is
 not the only thing that can raise that prompt. If you would rather pairing were always deliberate,
-use the usbmuxd setup below: usbmuxd never pairs on its own, so the button is the only trigger.
-
-### If you would rather not run netmuxd
-
-`usbmuxd` from your distribution works too, on the host, and springback then needs only its
-socket. Two differences, one in each direction: it only ever sees devices on the cable, so no
-Wi-Fi — and it never pairs on its own, so the **Pair** button is the only thing that can ask a
-device to trust this computer.
-
-```sh
-# Debian/Ubuntu: apt install usbmuxd  ·  Arch: pacman -S usbmuxd  ·  Alpine: apk add usbmuxd
-sudo systemctl enable --now usbmuxd
-```
-
-with [`deploy/compose.yml`](deploy/compose.yml), which mounts `/var/run/usbmuxd` straight into
-springback.
+use plain usbmuxd: it never pairs on its own, so the button is the only trigger.
 
 ### Then, roughly
 
