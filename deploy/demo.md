@@ -99,9 +99,11 @@ last ran `fly scale count`, which is why `deploy/fly-deploy` refuses to deploy o
 and says how to fix it. Override deliberately with `SPRINGBACK_ALLOW_MANY_MACHINES=1` if you ever
 need to.
 
-If the deploy token turns out not to be allowed to list machines, the script says so and deploys
-anyway — "could not check" is not "checked and fine", and failing a nightly deploy on an
-unverified assumption would be worse than the gap it guards.
+**The deploy token can list machines** — the open question when the check was written, since a
+deploy-scoped token is narrow by design. Confirmed on the first CI deploy (2026-08-12): neither run
+of the check printed *"could not read the machine count"*, so it read 0 before and 1 after. The
+fallback stays anyway: "could not check" is not "checked and fine", and failing a nightly deploy on
+an unverified assumption about flyctl's output would be worse than the gap it guards.
 
 ## What the demo is seeded with
 

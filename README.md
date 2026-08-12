@@ -12,6 +12,10 @@ and puts them back on a device whenever you need them.
 It runs on a Linux machine with your iPhone or iPad reachable from it, and you use it from a
 browser — usually the phone's.
 
+**[Try it without installing anything →](https://springback-demo.fly.dev)** — a throwaway demo on
+fixture data. The password is on the login screen. Nothing there talks to a real device or to
+Apple, and it resets itself.
+
 ---
 
 ## What it does

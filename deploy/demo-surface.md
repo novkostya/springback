@@ -94,8 +94,11 @@ throw-away path:
 
 Stated so it is not read as broader than it is.
 
-- **Nothing was measured behind fly's proxy.** The `X-Forwarded-For` behaviour was measured against
-  the image with the header set by hand. fly setting it as expected is documented, not verified.
+- **The `X-Forwarded-For` behaviour was measured against the image with the header set by hand**,
+  not behind fly's proxy. What the first deploy *did* confirm is the other header: the live
+  instance reports `"secure":true` over HTTPS, so `X-Forwarded-Proto` is arriving and read, and
+  session cookies are marked `Secure`. Whether fly's forwarded-for value is the visitor rather than
+  its own proxy is still documentation rather than measurement.
 - **The WebSocket connection ceiling is unmeasured.** `GET /api/ws` is disposed *accept* on the
   strength of its origin and session checks, not on any measurement of how many sockets one machine
   will hold.
