@@ -26,7 +26,8 @@ func (s *stubTools) PairedUDIDs(context.Context) ([]string, error)     { return 
 // Paired, and the records are readable — otherwise List refuses to read the device's name and
 // Apps refuses to run at all, since springback will not open a lockdown session to a device it
 // holds no pairing record for.
-func (s *stubTools) PairingKnown() bool { return true }
+func (s *stubTools) PairingKnown() bool      { return true }
+func (s *stubTools) Transport(string) string { return "usb" }
 func (s *stubTools) DeviceValue(_ context.Context, _, key string) (string, error) {
 	if key == "RegionInfo" {
 		return "AE/A", nil
@@ -62,6 +63,7 @@ func (s *unpairedDevice) ListDeviceUDIDs(context.Context) ([]string, error) {
 }
 func (s *unpairedDevice) PairedUDIDs(context.Context) ([]string, error) { return nil, nil }
 func (s *unpairedDevice) PairingKnown() bool                            { return true }
+func (s *unpairedDevice) Transport(string) string                       { return "usb" }
 func (s *unpairedDevice) DeviceValue(context.Context, string, string) (string, error) {
 	s.asked.Add(1)
 	return "", nil

@@ -532,7 +532,13 @@ function renderDevice() {
   // snapshot meant a device unplugged while its page was open still called itself "reachable"
   // here while the Devices list correctly said "offline" — the same device, two answers, and
   // the stale one on the page you were looking at.
-  const d = devices.find((x) => x.udid === udid) || st.device || { udid };
+  const listed = devices.find((x) => x.udid === udid) || st.device || { udid };
+  // ONE PAIR STATE FOR THE WHOLE PAGE. The list decides it from the records alone; this page
+  // additionally asked the device whether the record still works, which can turn "paired" into
+  // "unpaired" for a record the phone has since rejected. Merging them here means the pill, the
+  // facts and the Pairing block cannot say different things — the failure mode this page has
+  // already produced twice.
+  const d = st.pair ? { ...listed, pair: st.pair } : listed;
   const payload = appsCache.get(udid);
 
   const back = el("button", { className: "detail-back", type: "button" }, ["‹ Devices"]);
@@ -572,22 +578,28 @@ function renderDevice() {
   fact("iOS", d.ios);
   fact("Region", d.region);
   fact("UDID", d.udid);
+  // FROM THE POLLED LIST, NOT THE SNAPSHOT — the same rule as the reachability pill above, and
+  // this is the field that exposed why it matters. deviceState is fetched once when the page
+  // opens; plugging a cable into a phone already on Wi-Fi changes nothing else about it, so the
+  // list is byte-identical, no refetch is triggered, and the page went on saying "Wi-Fi" with a
+  // cable in it. The transport now travels with the list, so it changes when it changes.
+  const transport = d.transport || st.transport;
   fact("Connected over", d.reachable
-    ? (st.transport === "usb" ? "USB" : st.transport === "network" ? "Wi-Fi" : null)
+    ? (transport === "usb" ? "USB" : transport === "network" ? "Wi-Fi" : null)
     : null);
   // Only for a device that is NOT answering. For one that is, "last seen" is now — a fact
   // about nothing — and the row above already says how it is connected.
   if (!d.reachable && d.last_seen) fact("Last seen", fmtDate(d.last_seen));
 
   const blocks = [back, head, el("dl", { className: "facts" }, facts)];
-  blocks.push(...pairingBlock(udid, st));
+  blocks.push(...pairingBlock(udid, st, transport));
   blocks.push(...appsBlock(udid, d, payload));
   root.replaceChildren(...blocks);
 }
 
 // pairingBlock is the settings half of the page: is this host trusted by the device, and will
 // the device answer when it is not plugged in.
-function pairingBlock(udid, st) {
+function pairingBlock(udid, st, transport) {
   const out = [el("h3", { className: "sub-head", textContent: "Pairing" })];
 
   if (st.can_pair === false) {
@@ -605,7 +617,10 @@ function pairingBlock(udid, st) {
   out.push(el("p", { className: "hint", textContent: label }));
 
   if (pair === "unpaired" && st.can_pair !== false) {
-    const usb = st.transport === "usb";
+    // Live, so plugging the cable in ENABLES the Pair button then and there. It is the one
+    // control whose whole precondition is the transport, and leaving it on the snapshot meant
+    // connecting a cable to a device you were looking at left Pair greyed out.
+    const usb = transport === "usb";
     out.push(el("p", { className: "hint", textContent: usb
       ? "Unlock the device and tap Trust when it asks. Pairing only needs the cable once — after that Wi-Fi is enough."
       : "Connect the device with a USB cable to pair it. Wireless pairing exists in the protocol but only for Apple TV." }));

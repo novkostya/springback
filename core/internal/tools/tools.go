@@ -50,6 +50,18 @@ type Device struct {
 	// everything else here opens a lockdown session, and a lockdown session with no record
 	// pairs. See ErrNotPaired.
 	Pair PairState `json:"pair,omitempty"`
+	// Transport is the link the device last answered on: "usb" or "network". Empty for a
+	// device that is not answering at all.
+	//
+	// IN THE LIST BECAUSE IT CHANGES WITHOUT ANYTHING ELSE CHANGING. A phone already reachable
+	// over Wi-Fi that gets plugged in alters nothing else about itself — same udid, same name,
+	// still reachable — so a device list without this field is byte-identical before and after,
+	// the watcher sees no change, and nothing is pushed. The device page went on saying "Wi-Fi"
+	// with a cable in it until somebody pressed Refresh. Reported.
+	//
+	// Free to collect: the tool layer already recorded it while listing the devices, so this is
+	// a map lookup and not another question for the phone.
+	Transport string `json:"transport,omitempty"`
 }
 
 // InstalledApp is one installed app, as the device describes it.

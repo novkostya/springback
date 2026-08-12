@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestNothingTouchesAnUnpairedDevice guards the rule at the seam, where it cannot be forgotten.
@@ -22,22 +23,22 @@ func TestNothingTouchesAnUnpairedDevice(t *testing.T) {
 	// the state a phone is in the moment it is first plugged in.
 	calls := map[string]func() error{
 		"DeviceValue": func() error {
-			_, err := r.DeviceValue(context.Background(), "UDID-1", "DeviceName")
+			_, err := r.DeviceValue(context.Background(), "00008140-000269063E88801C", "DeviceName")
 			return err
 		},
 		"ListApps": func() error {
-			_, err := r.ListApps(context.Background(), "UDID-1")
+			_, err := r.ListApps(context.Background(), "00008140-000269063E88801C")
 			return err
 		},
 		"DeviceIcons": func() error {
-			_, err := r.DeviceIcons(context.Background(), "UDID-1", []string{"com.example.app"})
+			_, err := r.DeviceIcons(context.Background(), "00008140-000269063E88801C", []string{"com.example.app"})
 			return err
 		},
 		"InstallApp": func() error {
-			return r.InstallApp(context.Background(), "UDID-1", "/nonexistent.ipa", nil)
+			return r.InstallApp(context.Background(), "00008140-000269063E88801C", "/nonexistent.ipa", nil)
 		},
 		"SetWifiSync": func() error {
-			return r.SetWifiSync(context.Background(), "UDID-1", true)
+			return r.SetWifiSync(context.Background(), "00008140-000269063E88801C", true)
 		},
 	}
 	for name, call := range calls {
@@ -48,7 +49,7 @@ func TestNothingTouchesAnUnpairedDevice(t *testing.T) {
 
 	// WifiSync is the one that reports a state rather than an error, because its caller draws a
 	// switch and "unknown" is what an unreadable flag means everywhere else in that screen.
-	if got, _ := r.WifiSync(context.Background(), "UDID-1"); got != WifiSyncUnknown {
+	if got, _ := r.WifiSync(context.Background(), "00008140-000269063E88801C"); got != WifiSyncUnknown {
 		t.Errorf("WifiSync on an unpaired device = %q, want %q", got, WifiSyncUnknown)
 	}
 }
@@ -59,14 +60,61 @@ func TestARecordIsWhatMakesADeviceTouchable(t *testing.T) {
 	dir := t.TempDir()
 	r := &Real{LockdownDir: dir}
 
-	if err := r.requirePaired("UDID-1"); !errors.Is(err, ErrNotPaired) {
+	if err := r.requirePaired("00008140-000269063E88801C"); !errors.Is(err, ErrNotPaired) {
 		t.Fatalf("before pairing = %v, want ErrNotPaired", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "UDID-1.plist"), []byte("<plist/>"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "00008140-000269063E88801C.plist"), []byte("<plist/>"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.requirePaired("UDID-1"); err != nil {
+	if err := r.requirePaired("00008140-000269063E88801C"); err != nil {
 		t.Errorf("after pairing = %v, want nil", err)
+	}
+}
+
+// TestUnpairForgetsTheDeviceEvenWhenItIsNotThere is the reported bug: unpairing a device that is
+// asleep or unplugged left it in the list as an offline row that nothing could remove.
+//
+// idevicepair does two things and fails at the first — it needs the phone in order to tell the
+// phone. But the record that puts a device in the list is a file on THIS disk, and deleting it
+// needs nothing. `idevicepair` is not even installed in the test image, so the device half fails
+// here exactly as it does for an absent phone.
+func TestUnpairForgetsTheDeviceEvenWhenItIsNotThere(t *testing.T) {
+	dir := t.TempDir()
+	record := filepath.Join(dir, "00008140-000269063E88801C.plist")
+	if err := os.WriteFile(record, []byte("<plist/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Real{LockdownDir: dir, DeviceTimeout: time.Second}
+
+	if err := r.Unpair(context.Background(), "00008140-000269063E88801C"); err != nil {
+		t.Fatalf("Unpair = %v, want nil: the host can always forget a device", err)
+	}
+	if _, err := os.Stat(record); !os.IsNotExist(err) {
+		t.Error("the pairing record survived, so the device stays in the list forever")
+	}
+	// And the device is now genuinely unpaired as far as everything else is concerned.
+	if err := r.requirePaired("00008140-000269063E88801C"); !errors.Is(err, ErrNotPaired) {
+		t.Errorf("after unpairing, requirePaired = %v, want ErrNotPaired", err)
+	}
+}
+
+// TestUnpairWillNotDeleteWhateverItIsAsked: the udid arrives in a URL path, and it becomes a
+// filename. Nothing that is not a udid may get that far.
+func TestUnpairWillNotDeleteWhateverItIsAsked(t *testing.T) {
+	dir := t.TempDir()
+	victim := filepath.Join(dir, "SystemConfiguration.plist")
+	if err := os.WriteFile(victim, []byte("<plist/>"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r := &Real{LockdownDir: dir, DeviceTimeout: time.Second}
+
+	for _, udid := range []string{"../SystemConfiguration", "SystemConfiguration", "a/b", ".."} {
+		if err := r.removePairingRecord(udid); err == nil {
+			t.Errorf("removePairingRecord(%q) was allowed", udid)
+		}
+	}
+	if _, err := os.Stat(victim); err != nil {
+		t.Error("the host's own identity file was deleted")
 	}
 }
 
@@ -82,7 +130,7 @@ func TestUnreadableRecordsMeanUnknownNotUnpaired(t *testing.T) {
 		if r.PairingKnown() {
 			t.Errorf("%s: PairingKnown = true", name)
 		}
-		if err := r.requirePaired("UDID-1"); err != nil {
+		if err := r.requirePaired("00008140-000269063E88801C"); err != nil {
 			t.Errorf("%s: requirePaired = %v, want nil (unknown must not lock the device out)", name, err)
 		}
 	}

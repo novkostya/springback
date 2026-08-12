@@ -113,15 +113,68 @@ func (r *Real) Pair(ctx context.Context, udid string) error {
 }
 
 // Unpair removes this host's pairing record.
+//
+// TWO THINGS HAPPEN HERE AND ONLY ONE OF THEM NEEDS THE DEVICE. Telling the phone to forget this
+// computer needs the phone; deleting our own copy of the pairing record is a file on our own disk.
+// idevicepair does both and fails at the first, so unpairing a device that is asleep or unplugged
+// left the record sitting there — and a record is what puts a device in the list, so the "gone"
+// device came back as an offline row that nothing could remove. Reported.
+//
+// So the local record is removed whichever way the device call goes, and the device call becomes
+// best-effort. That is also the honest reading of the button: the user asked THIS host to forget
+// the device, and this host can always do that. The phone keeps a stale trust entry until it is
+// next plugged in, which costs nothing — pairing again overwrites it.
 func (r *Real) Unpair(ctx context.Context, udid string) error {
 	if err := r.pairingWritable(); err != nil {
 		return err
 	}
-	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "idevicepair", append(r.netFlag(udid), "-u", udid, "unpair")...)
-	if err != nil {
-		return classifyPair(out, err)
+
+	// Best effort, and its failure is not the answer: "No device found" here is the ordinary
+	// case for a phone in somebody's pocket.
+	out, devErr := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "idevicepair", append(r.netFlag(udid), "-u", udid, "unpair")...)
+
+	switch err := r.removePairingRecord(udid); {
+	case err == nil:
+		return nil
+	case devErr != nil:
+		// Neither half worked. The device's complaint is the more useful one — it names the
+		// state the device is in — so it is what the user sees.
+		return classifyPair(out, devErr)
+	default:
+		return err
+	}
+}
+
+// removePairingRecord deletes <lockdown>/<udid>.plist. A record that is already gone is success:
+// idevicepair may well have removed it a moment ago, and the caller wants the end state.
+func (r *Real) removePairingRecord(udid string) error {
+	if r.LockdownDir == "" {
+		return nil
+	}
+	// A udid is hex and hyphens. Anything else is not a device and must not become a path —
+	// this value arrives from a URL, and `..` in it would delete a file elsewhere.
+	if !safeUDID(udid) {
+		return fmt.Errorf("not a udid: %q", udid)
+	}
+	if err := os.Remove(filepath.Join(r.LockdownDir, udid+".plist")); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing the pairing record: %w", err)
 	}
 	return nil
+}
+
+// safeUDID accepts only what a udid can contain, so it can be used as a filename.
+func safeUDID(udid string) bool {
+	if udid == "" || len(udid) > 64 {
+		return false
+	}
+	for _, c := range udid {
+		switch {
+		case c >= '0' && c <= '9', c >= 'a' && c <= 'f', c >= 'A' && c <= 'F', c == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // PairTimeout is longer than an ordinary device call: the handshake waits on a human noticing a
@@ -183,7 +236,8 @@ func (r *Real) PairingKnown() bool {
 // the device to be answering, and the case being guarded is exactly the one where reaching the
 // device is what must not happen yet.
 func (r *Real) hasPairingRecord(udid string) bool {
-	if r.LockdownDir == "" || udid == "" {
+	// Same rule as the delete path: this value comes from a URL and becomes a path.
+	if r.LockdownDir == "" || !safeUDID(udid) {
 		return false
 	}
 	st, err := os.Stat(filepath.Join(r.LockdownDir, udid+".plist"))

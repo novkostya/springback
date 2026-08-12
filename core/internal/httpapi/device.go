@@ -61,7 +61,10 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		"device":    dev,
 		"pair":      pair,
 		"wifi_sync": wifi,
-		"transport": s.Tools.Transport(udid),
+		// Kept for compatibility with anything reading this endpoint directly. The UI takes it
+		// from the device list instead, where it is refreshed with everything else — this is a
+		// snapshot from whenever the page happened to be opened.
+		"transport": dev.Transport,
 		// Whether the controls can work at all, so the UI can explain a disabled button
 		// instead of offering one that always fails.
 		"can_pair": s.Tools.PairingWritable(),
@@ -89,6 +92,13 @@ func (s *Server) deviceUnpair(w http.ResponseWriter, r *http.Request) {
 	// somebody else's apps on disk.
 	if s.DeviceIcons != nil {
 		_ = s.DeviceIcons.Forget(r.PathValue("udid"))
+	}
+	// And the remembered name, model and iOS version. That cache exists so an OFFLINE device
+	// still renders as a phone rather than as forty characters of hex; a device this host has
+	// been told to forget has no row to render, and keeping somebody's phone name on disk after
+	// being asked to forget their phone is the wrong default.
+	if s.Devices != nil && s.Devices.Cache != nil {
+		s.Devices.Cache.Forget(r.PathValue("udid"))
 	}
 	s.Kick()
 	w.WriteHeader(http.StatusNoContent)

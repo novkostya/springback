@@ -128,6 +128,12 @@ func (s *Service) List(ctx context.Context) ([]tools.Device, error) {
 				d.Pair = tools.Unpaired
 			}
 
+			// Which link it answered on, for a device that answered at all. Recorded by
+			// the tool layer during the listing above, so this asks the device nothing.
+			if d.Reachable {
+				d.Transport = s.Tools.Transport(udid)
+			}
+
 			if d.Reachable && d.Pair != tools.Unpaired {
 				// Only an awake device can be asked — every one of these is a lockdown
 				// read and lockdown needs the device.
