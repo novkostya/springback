@@ -1768,6 +1768,36 @@ function renderAccountsList() {
     ]))));
 }
 
+// resetSignin puts the form back to a plain email-and-password sign-in.
+//
+// THE FLOW HAD NO WAY OUT, and that is the whole reason this exists. Once Apple asked for a code
+// the form held a pending account; every failure after that — a wrong code, an expired one, Apple
+// refusing outright — left three filled fields, an error, and no way back except reloading the
+// page. Reported.
+//
+// The password goes too. It is the one thing on this screen worth not leaving lying around, and
+// an abandoned attempt is exactly when nobody is coming back for it.
+function resetSignin() {
+  pendingSlug = null;
+  $("#acc-pass").value = "";
+  $("#acc-code").value = "";
+  $("#acc-2fa-wrap").hidden = true;
+  $("#acc-start-over").hidden = true;
+  $("#acc-submit").textContent = "Sign in";
+  $("#acc-submit").disabled = false;
+}
+
+$("#acc-start-over").onclick = () => {
+  resetSignin();
+  $("#acc-email").focus();
+};
+
+// CHANGING THE ADDRESS ABANDONS THE ATTEMPT, because a pending account belongs to the address it
+// was started with. Typing a different one and entering the code would have sent that code to the
+// previous account — the form would look like it was signing in as one Apple ID while doing it as
+// another.
+$("#acc-email").addEventListener("input", () => { if (pendingSlug) resetSignin(); });
+
 // The sign-in form is wired ONCE, against markup that was in the document at load. Nothing here
 // ever recreates an input, so nothing can clear what the user (or Safari) has put in one.
 $("#signin").addEventListener("submit", async (ev) => {
@@ -1802,25 +1832,29 @@ $("#signin").addEventListener("submit", async (ev) => {
       await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
     }
     toast(`Signed in as ${email}.`);
-    // Clearing here is deliberate and is the ONLY place it happens: the sign-in succeeded, so
-    // the password has no further use and should not sit in the DOM.
-    pendingSlug = null;
-    passEl.value = "";
-    codeEl.value = "";
-    $("#acc-2fa-wrap").hidden = true;
-    submit.textContent = "Sign in";
+    // The sign-in succeeded, so the password has no further use and should not sit in the DOM.
+    resetSignin();
     await refreshAccounts();
     renderAccountsList();
   } catch (e) {
     if (e.kind === "needs_2fa") {
       pendingSlug = e.body.slug;
       $("#acc-2fa-wrap").hidden = false;
+      $("#acc-start-over").hidden = false;
       codeEl.focus();
       submit.textContent = "Finish sign-in";
       toast(e.body.detail);
     } else {
       toast(e.message, true);
       submit.textContent = original;
+      // A CODE THAT FAILED IS NOT WORTH KEEPING. Apple's codes are single-use and expire, so
+      // the one in the box is spent whatever went wrong — leaving it there invites resubmitting
+      // the same failure, which is what makes this screen feel stuck.
+      if (pendingSlug) {
+        codeEl.value = "";
+        codeEl.focus();
+        $("#acc-start-over").hidden = false;
+      }
     }
   } finally {
     submit.disabled = false;

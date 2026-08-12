@@ -168,6 +168,13 @@
         </span>
       </label>
       <button class="primary wide" type="submit" id="acc-submit">Sign in</button>
+      <!--
+        THE WAY OUT OF A HALF-FINISHED SIGN-IN. Once Apple asks for a code the form holds a
+        pending account, and every failure after that left it there: three fields, an error, and
+        no way back except reloading the page. Reported. This is that way back, and it only
+        appears while there is something to abandon.
+      -->
+      <button class="link plain" type="button" id="acc-start-over" hidden>Start over</button>
     </form>
 
     <p class="hint spaced">

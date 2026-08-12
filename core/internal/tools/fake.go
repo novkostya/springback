@@ -351,6 +351,13 @@ func (f *Fake) AuthLogin(ctx context.Context, home, passphrase, email, password,
 		f.pending[home] = true
 		return ErrNeeds2FA
 	}
+	// A CODE THAT IS REFUSED, because the screen that handles it is the one that gets stuck.
+	// Every other outcome here succeeds, so the two-step form could only ever be exercised in
+	// its happy state — and the reported problem was what happens after it fails: three filled
+	// fields, an error, and no way back. `000000` is that failure, on demand.
+	if authCode == "000000" {
+		return fmt.Errorf("that verification code was not accepted")
+	}
 	delete(f.pending, home)
 	name := strings.TrimSuffix(email, filepath.Ext(email))
 	if i := strings.Index(email, "@"); i > 0 {
