@@ -27,6 +27,7 @@ import (
 	"github.com/novkostya/springback/core/internal/auth"
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/jobs"
+	"github.com/novkostya/springback/core/internal/live"
 	"github.com/novkostya/springback/core/internal/store"
 	"github.com/novkostya/springback/core/internal/storefront"
 	"github.com/novkostya/springback/core/internal/tools"
@@ -53,13 +54,28 @@ type Server struct {
 	// full of plausible device names that is not talking to any device would otherwise be
 	// indistinguishable from the real thing.
 	Fake bool
+
+	// --- live updates. Built by setupLive, which Handler calls; see live.go. ---
+
+	events    *live.Bus
+	kick      chan struct{}
+	jobsDirty chan struct{}
+	// mu guards lastDevices only, which is the JSON of the last published device list — the
+	// thing a new connection is handed and the thing each scan is compared against.
+	mu          sync.Mutex
+	lastDevices string
 }
 
 // Handler builds the mux.
 func (s *Server) Handler() http.Handler {
+	s.setupLive()
+
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("GET /api/health", s.health)
+	// Behind the guard like everything else under /api — which is what makes a WebSocket
+	// refusable at all, since the upgrade is the last moment a status code reaches the browser.
+	mux.HandleFunc("GET /api/ws", s.events.Handler(s.liveHello, s.sessionStillValid, s.Log))
 
 	mux.HandleFunc("GET /api/auth/status", s.authStatus)
 	mux.HandleFunc("POST /api/auth/setup", s.authSetup)
@@ -67,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/auth/logout", s.authLogout)
 
 	mux.HandleFunc("GET /api/devices", s.listDevices)
+	mux.HandleFunc("POST /api/devices/rescan", s.rescanDevices)
 	mux.HandleFunc("GET /api/devices/{udid}", s.deviceDetail)
 	mux.HandleFunc("POST /api/devices/{udid}/pair", s.devicePair)
 	mux.HandleFunc("POST /api/devices/{udid}/unpair", s.deviceUnpair)
@@ -115,16 +132,32 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 // Devices
 // ---------------------------------------------------------------------------
 
+// listDevices answers the fetch AND feeds the watcher, so a client asking directly — on a cold
+// boot, or because its socket is down — is not a second path with its own idea of the truth.
+// Whatever it learns is published to every open socket on the way out.
+//
+// An empty list is 200 with an empty array, never an error. Every device asleep is the ordinary
+// case (SPEC §3), and the UI says "not currently reachable", never "gone".
 func (s *Server) listDevices(w http.ResponseWriter, r *http.Request) {
-	devs, err := s.Devices.List(r.Context())
+	devs, err := s.scanDevices(r.Context())
 	if err != nil {
 		s.fail(w, err)
 		return
 	}
-	// An empty list is 200 with an empty array, never an error. Every device asleep is the
-	// ordinary case (SPEC §3), and the UI says "not currently reachable", never "gone".
-	if devs == nil {
-		devs = []tools.Device{}
+	writeJSON(w, http.StatusOK, devs)
+}
+
+// rescanDevices is the Refresh button under the device list.
+//
+// IT DOES THE SAME SCAN THE WATCHER DOES, just now — there is no deeper "rescan" available to
+// springback. It does not run a muxer and cannot make one re-enumerate the USB bus, which is the
+// thing that actually goes wrong when a device is plugged in and does not appear. The UI says so
+// next to the button rather than implying this fixes it.
+func (s *Server) rescanDevices(w http.ResponseWriter, r *http.Request) {
+	devs, err := s.scanDevices(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
 	}
 	writeJSON(w, http.StatusOK, devs)
 }

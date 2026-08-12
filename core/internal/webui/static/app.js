@@ -52,6 +52,10 @@ let booted = false;
 
 function showGate(state) {
   const setup = state === "needs_setup";
+  // NOTHING KEEPS FEEDING A GATED PAGE. The server closes the socket within a ping of the
+  // session dying, but the gate can also go up for reasons the server has not noticed yet, and
+  // a live socket behind a login form would go on drawing somebody's devices underneath it.
+  dropLive();
   document.body.classList.add("gated");
   $("#gate").hidden = false;
   $("#gate-intro").textContent = setup
@@ -68,6 +72,10 @@ function showGate(state) {
 function hideGate() {
   $("#gate").hidden = true;
   document.body.classList.remove("gated");
+  // Straight back on after a sign-in. boot() also connects, but it runs only once per document,
+  // so a session that expired and was signed into again would otherwise wait out the backoff.
+  liveBackoff = 1000;
+  connectLive();
   // Never leave the password sitting in a field behind a page the user is still looking at.
   $("#gate-pass").value = "";
   $("#gate-pass2").value = "";
@@ -233,18 +241,19 @@ let detail = null; // { app, deviceUdid } | { item }
 // Jobs — the progress strip.
 //
 // Downloads and installs no longer hold the request open, so this is where the user finds out
-// what is happening. Polled once a second while anything is running, and not at all when
-// nothing is.
+// what is happening. Pushed over the socket while it is up, and polled once a second while
+// anything is running when it is not.
 // ---------------------------------------------------------------------------
 
 let jobTimer = null;
 let knownJobs = new Map();
 let runningJobs = [];
 
-async function pollJobs() {
-  let list = [];
-  try { list = await api("/api/jobs"); } catch { return; }
-
+// applyJobs takes a job list from EITHER source — a push or a fetch — and is the only place that
+// knows what a job list means. Two sources, one interpretation: a socket that delivers a finished
+// download and a poll that finds one must produce exactly the same toast, the same cache
+// invalidation and the same redraw, and the way to guarantee that is to have one function do it.
+async function applyJobs(list) {
   runningJobs = list.filter((j) => j.state === "running");
   const strip = $("#jobs");
   // Downloads keep the top strip — they belong to no row. Installs are drawn IN the device
@@ -275,8 +284,16 @@ async function pollJobs() {
   // Re-render while jobs are running so the in-row rings advance, and once more when one
   // ends so the row settles into its finished state.
   if (runningJobs.length || finished) rerenderCurrent();
+}
 
+// pollJobs is the fallback: it runs only while the socket is down, and stops as soon as nothing
+// is happening. With the socket up the server pushes the same list four times a second.
+async function pollJobs() {
   clearTimeout(jobTimer);
+  if (liveConnected) return;
+  let list = [];
+  try { list = await api("/api/jobs"); } catch { return; }
+  await applyJobs(list);
   if (runningJobs.length) jobTimer = setTimeout(pollJobs, 1000);
 }
 
@@ -307,7 +324,10 @@ function jobRow(j) {
   ]);
 }
 
+// startedJob is what a button calls after asking for work. With the socket up there is nothing to
+// do: the server publishes the moment the job exists, which is before this even runs.
 function startedJob() {
+  if (liveConnected) return;
   clearTimeout(jobTimer);
   jobTimer = setTimeout(pollJobs, 300);
 }
@@ -316,9 +336,27 @@ function startedJob() {
 // Devices
 // ---------------------------------------------------------------------------
 
-async function refreshDevices() {
-  devices = await api("/api/devices");
+// applyDevices takes a device list from either source and redraws only if something actually
+// changed — the same rule as applyJobs, and for the sharper reason: the device page holds a search
+// box, and rebuilding it takes the caret and the phone's keyboard away mid-word.
+//
+// The comparison is over the WHOLE list rather than a chosen few fields. An earlier version
+// compared udid, name and reachability only, which is every field that changes often and not every
+// field that changes — a device whose iOS version or region was read a moment late never redrew.
+function applyDevices(list) {
+  const before = JSON.stringify(devices);
+  devices = list || [];
   devicesLoaded = true;
+  if (before === JSON.stringify(devices)) return false;
+  // A device coming or going changes more than the list: its pairing state and transport are
+  // read separately and go stale with it.
+  if (current === "device" && deviceUDID) loadDeviceState(deviceUDID);
+  if (current === "devices" || current === "app" || current === "device") rerenderCurrent();
+  return true;
+}
+
+async function refreshDevices() {
+  applyDevices(await api("/api/devices"));
 }
 
 function renderDevices() {
@@ -346,7 +384,48 @@ function renderDevices() {
   }
 
   frag.push(el("div", { className: "list" }, devices.map(deviceRow)));
+  frag.push(rescanFoot());
   root.replaceChildren(...frag);
+}
+
+// rescanFoot is the Refresh under the list, and the sentence next to it that says what Refresh
+// cannot do.
+//
+// WHAT IT ACTUALLY DOES is ask the same question the watcher asks every five seconds, immediately.
+// That is the whole of springback's power over the matter: it does not own the USB bus and never
+// has — it runs `idevice_id` and believes the answer. The case where a device is plugged in and
+// genuinely absent is a muxer that has given up on the port, and no button here can fix it. Saying
+// so is worth more than the button: it is the difference between one restart and half an hour of
+// tapping Refresh.
+//
+// BELOW THE LIST, NOT ABOVE IT. The list is what the screen is for and it should be the first
+// thing under the heading; an action bar above it would push the content down on every visit to
+// serve the rare one.
+function rescanFoot() {
+  const b = el("button", { className: "link plain", type: "button", textContent: "Refresh" });
+  b.onclick = async () => {
+    if (b.disabled) return;
+    b.disabled = true;
+    b.textContent = "Refreshing…";
+    try {
+      applyDevices(await api("/api/devices/rescan", { method: "POST" }));
+    } catch (e) {
+      toast(e.message, true);
+    }
+    // renderDevices may already have replaced this node from inside applyDevices, in which
+    // case restoring the label is writing to something that has left the document — harmless,
+    // and cheaper than working out which case this is.
+    b.disabled = false;
+    b.textContent = "Refresh";
+  };
+
+  return el("div", { className: "list-foot" }, [
+    b,
+    el("p", { className: "hint", textContent:
+      "This list keeps itself up to date. If a device you have just plugged in is still missing, " +
+      "the muxer is the thing to restart — springback asks it what is connected and cannot make it " +
+      "look again." }),
+  ]);
 }
 
 // deviceLabel disambiguates devices that share a name.
@@ -1611,18 +1690,11 @@ async function pollDevices() {
   // under an open page — and then this would keep firing 401s at a login screen every five
   // seconds, for as long as the tab stayed open.
   if (!$("#gate").hidden) return;
-  const before = JSON.stringify(devices.map((d) => [d.udid, d.reachable, d.name]));
-  try { await refreshDevices(); } catch { return; }
-  const after = JSON.stringify(devices.map((d) => [d.udid, d.reachable, d.name]));
-  // Re-render only on a real change, so an expanded device's app list is not torn down and
-  // rebuilt under the reader every five seconds.
-  if (before !== after) {
-    // A device coming or going changes more than the list: its pairing state and transport
-    // are read separately and go stale with it. Re-fetch them for the page being looked at —
-    // only on a real change, so this stays two round trips per event rather than per poll.
-    if (current === "device" && deviceUDID) loadDeviceState(deviceUDID);
-    if (current === "devices" || current === "app" || current === "device") rerenderCurrent();
-  }
+  // NOR WHILE THE SOCKET IS UP, which is the ordinary case now. The server runs this same scan
+  // once for everybody and pushes what it finds; this interval is what covers the minutes
+  // between a socket dying and the next reconnect succeeding.
+  if (liveConnected) return;
+  try { await refreshDevices(); } catch { /* the screens report it */ }
 }
 
 // THE POLLERS START IN boot(), NOT HERE. Registered at module load they ran while the gate was
@@ -1631,7 +1703,102 @@ async function pollDevices() {
 // appeared. Nothing on a gated page has any business talking to an API it cannot reach.
 function startPolling() {
   setInterval(pollDevices, DEVICE_POLL_MS);
-  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollDevices(); });
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) return;
+    // COMING BACK TO A TAB IS THE ONE MOMENT WORTH ASKING ANYWAY. A socket does not always
+    // announce its own death — a phone that slept through a wifi handover holds one that is
+    // open to the browser and connected to nothing, and the first sign of it is silence, which
+    // looks exactly like nothing having happened. One fetch on foregrounding settles it, and
+    // costs one request per time the user looks at the page.
+    if (!$("#gate").hidden) return;
+    if (liveConnected) refreshDevices().catch(() => {});
+    else { connectLive(); pollDevices(); }
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The event socket
+//
+// The server pushes device and job changes; everything the user DOES is still an ordinary HTTP
+// request. That asymmetry is the whole design: there are no commands on this socket, so a browser
+// that cannot open one — an ancient proxy that will not upgrade, a network that eats them — loses
+// only the immediacy, and the intervals above still carry it. Nothing is unreachable without it.
+//
+// The frames carry the same bodies as GET /api/devices and GET /api/jobs, so they feed the
+// functions that already existed rather than a second implementation of the same screens.
+// ---------------------------------------------------------------------------
+
+let socket = null;
+// liveConnected is set by the hello frame rather than by onopen: an upgrade that succeeds and then
+// says nothing is not a working connection, and the pollers must not stand down for one.
+let liveConnected = false;
+let liveRetry = null;
+let liveBackoff = 1000;
+const LIVE_BACKOFF_MAX = 30000;
+
+function connectLive() {
+  if (socket) return;
+  // Not from behind the gate, for the same reason the pollers do not run there. A 401 on the
+  // upgrade is invisible to script — the browser reports a generic failure — so retrying would
+  // be blind hammering at a door it cannot open. No retry is scheduled either: hideGate
+  // reconnects the moment there is a session to connect with.
+  if (!$("#gate").hidden) return;
+
+  const url = new URL("/api/ws", location.href);
+  url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
+
+  let ws;
+  try { ws = new WebSocket(url); } catch { retryLive(); return; }
+  socket = ws;
+
+  ws.onmessage = (ev) => {
+    let env;
+    try { env = JSON.parse(ev.data); } catch { return; }
+    if (env.type === "hello") {
+      liveConnected = true;
+      liveBackoff = 1000;
+      // The one-second job poll is now redundant. Stopping it here rather than letting it
+      // expire keeps a download that was running through a reconnect from being polled and
+      // pushed at the same time.
+      clearTimeout(jobTimer);
+      return;
+    }
+    if (env.type === "devices") applyDevices(env.data);
+    if (env.type === "jobs") applyJobs(env.data);
+  };
+
+  ws.onclose = () => {
+    if (socket !== ws) return;
+    socket = null;
+    const wasLive = liveConnected;
+    liveConnected = false;
+    retryLive();
+    // Cover the gap now rather than at the next tick — a socket usually dies at the moment
+    // something interesting is happening to the network it was watching.
+    if (wasLive) { pollDevices(); pollJobs(); }
+  };
+  // An error is always followed by a close, so there is nothing to do here but make sure the
+  // close actually comes.
+  ws.onerror = () => { try { ws.close(); } catch { /* already gone */ } };
+}
+
+// retryLive backs off to half a minute. A socket that will not open usually will not open for a
+// while — a proxy that strips upgrades, a session that has expired — and hammering it would be a
+// request a second forever behind a login screen nobody is looking at.
+function retryLive() {
+  clearTimeout(liveRetry);
+  liveRetry = setTimeout(connectLive, liveBackoff);
+  liveBackoff = Math.min(liveBackoff * 2, LIVE_BACKOFF_MAX);
+}
+
+// dropLive closes the socket and stops trying to reopen it. The pollers take over on their own,
+// since every one of them is guarded on liveConnected.
+function dropLive() {
+  clearTimeout(liveRetry);
+  liveConnected = false;
+  const ws = socket;
+  socket = null;
+  if (ws) { try { ws.close(); } catch { /* already gone */ } }
 }
 
 // boot runs once, AFTER the gate is satisfied. Everything it does needs a session, so running it
@@ -1657,6 +1824,7 @@ async function boot() {
   await renderRoute(new URL(location.href));
   pollJobs();
   startPolling();
+  connectLive();
 }
 
 (async () => {

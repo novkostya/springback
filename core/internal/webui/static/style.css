@@ -371,6 +371,12 @@ button.wide { width: 100%; }
 button:hover:not(:disabled) { filter: brightness(1.1); }
 button[disabled] { opacity: 0.45; cursor: default; }
 
+/* The action under a list, and the sentence explaining its limits. Left-aligned with the rows
+   above it — the button's own 4px of padding is cancelled so the two edges line up. */
+.list-foot { margin-top: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 2px; }
+.list-foot button.link { padding-left: 0; }
+.list-foot .hint { margin: 0; max-width: 60ch; }
+
 .empty { color: var(--dim); padding: 20px 0; }
 .hint { color: var(--dim); font-size: 12px; }
 .hint.spaced { margin-top: 18px; }

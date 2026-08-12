@@ -226,6 +226,27 @@ func (s *Service) Check(token string) error {
 	return nil
 }
 
+// Valid reports whether a session is still good WITHOUT counting as activity.
+//
+// THE DIFFERENCE FROM Check IS THE WHOLE POINT. Check refreshes lastSeen, which is right for a
+// request somebody made and wrong for the event socket, which pings itself every thirty seconds
+// with nobody in the room. Using Check there would mean a forgotten tab held a session open
+// forever — an idle timeout that no longer measures idleness. This lets the socket notice a dead
+// session without being the reason one never dies.
+func (s *Service) Valid(token string) bool {
+	if token == "" {
+		return false
+	}
+	now := s.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[tokenKey(token)]
+	if !ok {
+		return false
+	}
+	return now.Sub(sess.lastSeen) <= s.IdleTimeout && now.Sub(sess.created) <= s.AbsoluteTimeout
+}
+
 // Logout drops one session.
 func (s *Service) Logout(token string) {
 	if token == "" {

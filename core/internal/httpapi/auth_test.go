@@ -81,6 +81,9 @@ func TestAPIIsClosedUntilSignedIn(t *testing.T) {
 		{"DELETE", "/api/accounts/x"},
 		{"GET", "/api/jobs"},
 		{"GET", "/api/lookup?bundle_id=x"},
+		// The event socket, which is the one route where being refused matters most: it is
+		// the only one that would otherwise keep streaming device names for hours.
+		{"GET", "/api/ws"},
 	}
 	for _, p := range protected {
 		w := do(h, p.method, p.path, "{}")

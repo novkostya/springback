@@ -71,10 +71,33 @@ type Registry struct {
 	// retain is how long a finished job stays visible. Long enough for a UI that polls every
 	// second to see the ending, short enough that the list does not become a log.
 	retain time.Duration
+	// onChange is called after anything about any job changes, so the UI can be told rather
+	// than made to ask. Called with no lock held and it must not block — the caller is a
+	// download reporting its progress bar, several times a second.
+	onChange func()
 }
 
 func NewRegistry() *Registry {
 	return &Registry{jobs: map[string]*Job{}, retain: 2 * time.Minute}
+}
+
+// Notify registers the callback fired on every change. One listener, because there is one UI.
+func (r *Registry) Notify(fn func()) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.onChange = fn
+}
+
+// changed fires the callback, and MUST be called with the lock released. The callback pushes to
+// every open browser; doing that while holding the registry's mutex would put the whole of the
+// UI's fan-out on the critical path of a progress frame.
+func (r *Registry) changed() {
+	r.mu.Lock()
+	fn := r.onChange
+	r.mu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 // Start registers a job and runs fn in the background.
@@ -115,6 +138,7 @@ func (r *Registry) Start(kind Kind, key, label, target string, fn func(ctx conte
 	}
 	r.jobs[id] = job
 	r.mu.Unlock()
+	r.changed()
 
 	go func() {
 		h := &Handle{reg: r, id: id}
@@ -135,6 +159,7 @@ func (r *Registry) Start(kind Kind, key, label, target string, fn func(ctx conte
 		}
 		r.mu.Unlock()
 		r.reap()
+		r.changed()
 	}()
 
 	return r.snapshot(id)
@@ -149,9 +174,9 @@ type Handle struct {
 // Progress records how far along the job is. percent < 0 means "not known yet".
 func (h *Handle) Progress(percent int, stage, detail string) {
 	h.reg.mu.Lock()
-	defer h.reg.mu.Unlock()
 	j := h.reg.jobs[h.id]
 	if j == nil {
+		h.reg.mu.Unlock()
 		return
 	}
 	if percent >= 0 {
@@ -163,6 +188,8 @@ func (h *Handle) Progress(percent int, stage, detail string) {
 	if detail != "" {
 		j.Detail = detail
 	}
+	h.reg.mu.Unlock()
+	h.reg.changed()
 }
 
 // Get returns one job.

@@ -181,6 +181,12 @@ springback.example.com {
 }
 ```
 
+One thing to check if you use something other than Caddy: springback keeps a WebSocket open to
+push device and job changes, so the proxy has to pass the upgrade through. Caddy and Traefik do it
+without being asked; nginx needs `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header
+Connection "upgrade";` on the location. Nothing breaks if you forget — the page falls back to
+polling, exactly as it worked before — it just stops feeling instant.
+
 ### Keeping devices reachable over Wi-Fi
 
 Once a device is paired, it answers over Wi-Fi as long as its Wi-Fi sync flag is on — there is a

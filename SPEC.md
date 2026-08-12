@@ -169,6 +169,7 @@ Everything under `/api` needs a session, bar `/api/health` and the auth endpoint
     DELETE /api/accounts/<slug>
 
     GET    /api/devices                     [{udid, name, reachable, product_type, ios}]
+    POST   /api/devices/rescan              same scan, now -> the list
     GET    /api/devices/<udid>              + pair state, wifi_sync, transport, can_pair
     GET    /api/devices/<udid>/apps         installed apps + store_status per app
     GET    /api/devices/<udid>/installed    bundle ids + versions only, no store lookups
@@ -187,8 +188,30 @@ Everything under `/api` needs a session, bar `/api/health` and the auth endpoint
     GET    /api/jobs/<id>
     GET    /api/lookup?bundle_id=<b>        multi-storefront resolve -> {id|null, checked:[cc]}
 
+    GET    /api/ws                          event socket, server -> client only
+                                            {type: hello|devices|jobs, data}
+
 Downloads are slow (~30 s and up) and installs slower. v0.1 held the request open; it now starts
-a job and returns immediately, and the UI polls `/api/jobs`.
+a job and returns immediately.
+
+**The socket carries no commands, and that is the design rather than an omission.** Every action
+is still one of the requests above; `/api/ws` only says "this changed", carrying the same bodies
+`GET /api/devices` and `GET /api/jobs` return. So a browser that cannot open one — a proxy that
+will not upgrade, a network that eats them — loses the immediacy and nothing else: the client
+falls back to the intervals it used before (devices every 5 s, jobs every 1 s while one runs) and
+every screen still works.
+
+One watcher polls the devices in the SERVER, every 5 s, and only while at least one browser is
+listening. It publishes only when the list has actually changed — each frame rebuilds a screen,
+and the device page holds a search box that a needless rebuild would take the keyboard away from.
+Job frames are coalesced to one per 250 ms, because ipatool reports progress many times a second.
+
+The socket is behind the same session guard as everything else under `/api` — checked before the
+upgrade, which is the only moment a WebSocket can be refused with a status the browser can see —
+and re-checked on every 30 s ping, so an expiring session takes its sockets with it. That re-check
+uses `auth.Valid`, which does NOT refresh the session: a socket must be able to notice its session
+dying without being the reason one never does. Origin is required to match Host, because a
+WebSocket handshake is not subject to CORS and carries cookies.
 
 ---
 

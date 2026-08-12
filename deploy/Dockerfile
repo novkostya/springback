@@ -11,11 +11,29 @@
 ARG GO_IMAGE=golang:1.26.5-alpine3.24
 ARG ALPINE_IMAGE=alpine:3.24
 
+# THE VERSION PINS HAVE NO DEFAULTS, DELIBERATELY, AND THAT NEEDS A GUARD.
+#
+# Two base images carry defaults above because a FROM cannot be checked at run time; everything
+# else is passed from versions.env, which stays the single source of truth. The cost is that a
+# caller who forgets one gets an EMPTY string rather than an error — and an empty pin does not
+# fail where it was omitted, it fails several lines later inside somebody else's tool.
+#
+# Measured, from a real release run: a build-push-action that passed only VERSION produced
+#
+#     git clone --depth 1 --branch  https://github.com/libimobiledevice/ideviceinstaller .
+#     ERROR: process "/bin/sh -c git clone ..." did not complete successfully: exit code: 128
+#
+# — git reading the URL as the branch name. Nothing in that says "you forgot a build argument",
+# and it cost an afternoon. Each stage below now checks its own pin first and says which one.
+ARG PIN_HINT="pass it from versions.env, e.g. --build-arg NAME=value (the Makefile does this for you)"
+
 # =============================================================================
 # Toolchain stage — reused verbatim by the Makefile gate targets.
 # =============================================================================
 FROM ${GO_IMAGE} AS toolchain-go
 ARG GOLANGCI_LINT_VERSION
+ARG PIN_HINT
+RUN test -n "${GOLANGCI_LINT_VERSION}" || { echo "GOLANGCI_LINT_VERSION is empty — ${PIN_HINT}"; exit 1; }
 RUN apk add --no-cache git make gcc musl-dev
 # golangci-lint built WITH this exact Go, so no analyzer/toolchain skew. v2 module path carries
 # the /v2 suffix.
@@ -39,6 +57,8 @@ WORKDIR /src
 # libgcc that the runtime already has. `springback` itself stays CGO_ENABLED=0.
 FROM toolchain-go AS ipatool-build
 ARG IPATOOL_REF
+ARG PIN_HINT
+RUN test -n "${IPATOOL_REF}" || { echo "IPATOOL_REF is empty — ${PIN_HINT}"; exit 1; }
 RUN CGO_ENABLED=1 go install -trimpath -ldflags "-s -w" \
       github.com/majd/ipatool/v2@${IPATOOL_REF} \
     && install -m0755 /go/bin/ipatool /ipatool
@@ -50,6 +70,8 @@ RUN CGO_ENABLED=1 go install -trimpath -ldflags "-s -w" \
 # APKINDEX check behind that claim.
 FROM ${ALPINE_IMAGE} AS ideviceinstaller-build
 ARG IDEVICEINSTALLER_REF
+ARG PIN_HINT
+RUN test -n "${IDEVICEINSTALLER_REF}" || { echo "IDEVICEINSTALLER_REF is empty — ${PIN_HINT}"; exit 1; }
 RUN apk add --no-cache git build-base autoconf automake libtool pkgconf \
       libimobiledevice-dev libplist-dev libimobiledevice-glue-dev libzip-dev
 WORKDIR /src/ideviceinstaller

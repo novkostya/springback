@@ -56,6 +56,9 @@ func (s *Server) devicePair(w http.ResponseWriter, r *http.Request) {
 		s.failPairing(w, err)
 		return
 	}
+	// A device that has just been paired is reachable in a way it was not a moment ago. Tell the
+	// watcher now rather than letting the list disagree with the page for five seconds.
+	s.Kick()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -70,6 +73,7 @@ func (s *Server) deviceUnpair(w http.ResponseWriter, r *http.Request) {
 	if s.DeviceIcons != nil {
 		_ = s.DeviceIcons.Forget(r.PathValue("udid"))
 	}
+	s.Kick()
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -91,6 +95,9 @@ func (s *Server) deviceWifiSync(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
+	// Turning Wi-Fi sync OFF takes the device off the network entirely — it stops being
+	// reachable within seconds, and the list should say so without being asked.
+	s.Kick()
 	w.WriteHeader(http.StatusNoContent)
 }
 

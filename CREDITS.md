@@ -26,11 +26,13 @@ springback's own code is [MIT](LICENSE).
 |---|---|---|
 | [howett.net/plist](https://github.com/DHowett/go-plist) | Parses the `iTunesMetadata` receipts that make one-tap Archive possible | BSD-2-Clause |
 | [github.com/creack/pty](https://github.com/creack/pty) | Gives ipatool a terminal, so it prompts for 2FA and prints a progress bar | MIT |
+| [github.com/coder/websocket](https://github.com/coder/websocket) | The event socket that pushes device and job changes to the browser | ISC |
 | [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) | argon2id, for the one password | BSD-3-Clause |
 | [golang.org/x/sys](https://pkg.go.dev/golang.org/x/sys) | Terminal control while driving ipatool | BSD-3-Clause |
 
 That is the whole list — `go list -deps` on the binary returns nothing else. No web framework, no
-bundler, no CSS library: the UI is three hand-written files.
+bundler, no CSS library: the UI is three hand-written files. (ISC is the two-clause permissive
+licence OpenBSD uses; it imposes nothing MIT does not.)
 
 ---
 
