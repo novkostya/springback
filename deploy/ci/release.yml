@@ -108,10 +108,14 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.platform }}
           cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
 
+      # The digest is carried as an EMPTY FILE NAMED after it, so the filename must lose the
+      # `sha256:` prefix: a colon is not allowed in an artifact path (NTFS), and upload-artifact
+      # refuses the whole upload over it. The merge job puts the prefix back.
       - name: export the digest
         run: |
           mkdir -p /tmp/digests
-          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
 
       - uses: actions/upload-artifact@v7
         with:
@@ -151,15 +155,15 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      # The digests are empty FILES NAMED after each manifest, so the filenames are the argument
-      # list. `imagetools create` takes the tags from the metadata action and the sources from
-      # here, and publishes one index pointing at both architectures.
+      # The filenames are the digests without their `sha256:` prefix, so it goes back on here.
+      # `imagetools create` takes the tags from the metadata action and the sources from these,
+      # and publishes one index pointing at both architectures.
       - name: create the multi-arch tags
         working-directory: /tmp/digests
         run: |
           docker buildx imagetools create \
             $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
-            $(printf '${{ env.IMAGE }}@%s ' *)
+            $(printf '${{ env.IMAGE }}@sha256:%s ' *)
 
       # Proof, in the log, that the tag really carries both. A release that quietly published one
       # architecture under a name promising two is the failure this whole file is arranged to
