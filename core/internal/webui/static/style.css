@@ -173,7 +173,16 @@ body.gated > #insecure-banner { display: none; }
   cursor: pointer;
 }
 .row:last-child { border-bottom: 0; }
-.row:hover:not(:disabled) { background: #211d1b; }
+/* HOVER ONLY WHERE THERE IS A POINTER. On a touch screen there is no such thing as "no longer
+   hovering", so a tapped row keeps the highlight after the page it opened has been swiped away —
+   which reads as a selected row on a list that has no selection. The tap highlight goes for the
+   same reason: iOS paints its own grey box and leaves it behind through a back gesture. */
+@media (hover: hover) and (pointer: fine) {
+  .row:hover:not(:disabled) { background: #211d1b; }
+}
+.row { -webkit-tap-highlight-color: transparent; }
+/* Keyboard focus still has to be visible — this removes a stuck HOVER, not the focus ring. */
+.row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .row:disabled { cursor: default; opacity: 0.55; }
 .row.static { cursor: default; }
 .device-row { background: var(--panel-2); }
@@ -206,7 +215,7 @@ body.gated > #insecure-banner { display: none; }
   color: var(--dim);
   white-space: nowrap;
 }
-.pill.asleep { border-color: #5b4a2e; color: #c9a66b; }
+.pill.offline { border-color: #5b4a2e; color: #c9a66b; }
 .pill.live { border-color: #40563a; color: #9dbb8a; }
 .pill.risk { border-color: #7a3427; color: #f0a08e; background: #2e1a15; }
 
@@ -315,7 +324,7 @@ body.gated > #insecure-banner { display: none; }
 
 /* --- generic ------------------------------------------------------------- */
 
-button.primary, button.danger, button.link {
+button.primary, button.danger, button.secondary, button.link {
   border-radius: 8px;
   padding: 11px 14px;
   font: inherit;
@@ -325,6 +334,9 @@ button.primary, button.danger, button.link {
 }
 button.primary { background: var(--accent); border: 1px solid var(--accent); color: #1a1108; font-weight: 600; }
 button.danger { background: var(--panel-2); border: 1px solid var(--line); color: var(--danger); }
+/* A NEUTRAL full-width button. Sign out had no class at all, so `button.wide` gave it a width and
+   the browser gave it everything else — a 20px-tall native control stretched across the screen. */
+button.secondary { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); }
 button.link {
   background: none;
   border: 0;
@@ -449,7 +461,7 @@ main { padding-bottom: 96px; }
 /* --- affordances ---------------------------------------------------------
 
    The install control was a `pill` reading "install" — the same shape used elsewhere for
-   PASSIVE status ("reachable", "asleep"), so it read as a label rather than a control and got
+   PASSIVE status ("reachable", "offline"), so it read as a label rather than a control and got
    tapped twice. A thing you can tap must not look like a thing that merely reports. */
 
 .btn-inline {

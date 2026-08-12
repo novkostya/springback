@@ -274,7 +274,7 @@ function renderDevices() {
     el("h2", { className: "screen", textContent: "Devices" }),
     el("p", {
       className: "screen-hint",
-      textContent: "Tap a device for its apps, its pairing, and its Wi-Fi sync setting.",
+      textContent: "Tap a device for its apps, pairing and Wi-Fi sync.",
     }),
   ];
 
@@ -316,7 +316,7 @@ function deviceRow(d) {
       el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
         className: "row-sub",
-        textContent: [d.product_type, d.ios && `iOS ${d.ios}`, d.region].filter(Boolean).join(" · "),
+        textContent: [d.model || d.product_type, d.ios && `iOS ${d.ios}`, d.region].filter(Boolean).join(" · "),
       }),
     ]),
     el("div", { className: "row-right" }, [
@@ -324,7 +324,7 @@ function deviceRow(d) {
         ? el("span", { className: "pill live", textContent: "reachable" })
         // "not currently reachable", never "gone": a sleeping iPhone drops off mDNS
         // entirely, and that is normal.
-        : el("span", { className: "pill asleep", textContent: "asleep" }),
+        : el("span", { className: "pill offline", textContent: "offline" }),
       el("span", { className: "chev", textContent: "›" }),
     ]),
   ]);
@@ -375,18 +375,26 @@ function renderDevice() {
     el("h2", { className: "screen", textContent: deviceLabel(d) }),
     d.reachable
       ? el("span", { className: "pill live", textContent: "reachable" })
-      : el("span", { className: "pill asleep", textContent: "asleep" }),
+      : el("span", { className: "pill offline", textContent: "offline" }),
   ]);
 
   const facts = [];
   const fact = (k, v) => { if (v) facts.push(el("div", { className: "fact" }, [
     el("dt", { textContent: k }), el("dd", { textContent: String(v) }),
   ])); };
-  fact("Model", d.product_type);
+  fact("Model", d.model || d.product_type);
+  // The raw identifier stays on the page: the marketing name comes from a table that will
+  // one day not know a device, and this is the thing you would paste into a search.
+  if (d.model && d.model !== d.product_type) fact("Identifier", d.product_type);
   fact("iOS", d.ios);
   fact("Region", d.region);
   fact("UDID", d.udid);
-  fact("Connected over", st.transport === "usb" ? "USB" : st.transport === "network" ? "Wi-Fi" : null);
+  fact("Connected over", d.reachable
+    ? (st.transport === "usb" ? "USB" : st.transport === "network" ? "Wi-Fi" : null)
+    : null);
+  // Only for a device that is NOT answering. For one that is, "last seen" is now — a fact
+  // about nothing — and the row above already says how it is connected.
+  if (!d.reachable && d.last_seen) fact("Last seen", fmtDate(d.last_seen));
 
   const blocks = [back, head, el("dl", { className: "facts" }, facts)];
   blocks.push(...pairingBlock(udid, st));
@@ -818,7 +826,7 @@ function installRow(d, item) {
     // The device has an older build than the library copy — offer the update by name.
     right = el("span", { className: "btn-inline", textContent: "Update" });
   } else if (!d.reachable) {
-    right = el("span", { className: "pill asleep", textContent: "asleep" });
+    right = el("span", { className: "pill offline", textContent: "offline" });
   } else {
     right = el("span", { className: "btn-inline", textContent: "Install" });
   }
@@ -1149,7 +1157,7 @@ function renderLibrary() {
 
   root.replaceChildren(
     el("h2", { className: "screen", textContent: "Library" }),
-    el("p", { className: "screen-hint", textContent: "Apps downloaded to this box. Tap one for details and to install it." }),
+    el("p", { className: "screen-hint", textContent: "Apps archived on this box. Tap one to install it." }),
     rows.length ? el("div", { className: "list" }, rows)
                 : el("p", { className: "empty", textContent: "Nothing downloaded yet." }),
     el("h3", { className: "sub-head", textContent: "Add by App Store id" }),
@@ -1230,6 +1238,13 @@ function startAtTop() {
 // whole reason this takes an argument: a traversal must restore, a new navigation must build.
 async function renderRoute(url, { traverse = false } = {}) {
   const route = routeFor(url);
+
+  // DROP THE FOCUS THE TAP LEFT BEHIND. A row is an <a>, so tapping it focuses it, and Safari
+  // keeps that focus through a back-swipe — the row you left from comes back looking picked, on
+  // a list where nothing is ever selected. Only for links: blurring an input would take the
+  // keyboard away from someone mid-word.
+  const active = document.activeElement;
+  if (active && active !== document.body && active.tagName === "A") active.blur();
 
   if (route.screen === "app") {
     // The detail view is rebuilt either way — it shows one specific app, and reusing the
@@ -1381,7 +1396,7 @@ function renderAccountsList() {
     el("div", { className: "row static" }, [
       el("div", { className: "row-main" }, [
         el("div", { className: "row-title", textContent: a.email }),
-        el("div", { className: "row-sub", textContent: `${a.name || "—"} · added ${fmtDate(a.added_at)}` }),
+        el("div", { className: "row-sub", textContent: [a.name, `added ${fmtDate(a.added_at)}`].filter(Boolean).join(" · ") }),
       ]),
       el("div", { className: "row-right stack" }, [
         a.signed_in

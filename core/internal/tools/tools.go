@@ -16,6 +16,7 @@ package tools
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // Device is one paired iPhone or iPad.
@@ -31,8 +32,14 @@ type Device struct {
 	// Region is the raw RegionInfo value, e.g. "AE/A" or "LL/A". It is an APPLE part-number
 	// region code, NOT an ISO country code — see the storefront package for why that
 	// distinction decides whether the at-risk screen is trustworthy.
-	Region    string `json:"region"`
-	Reachable bool   `json:"reachable"`
+	Region string `json:"region"`
+	// Model is the name on the box — "iPhone 16 Pro" — for the identifier in ProductType.
+	// Falls back to the identifier itself when the table does not know it.
+	Model string `json:"model,omitempty"`
+	// LastSeen is when an OFFLINE device was last reachable. Zero for a device that is
+	// answering now, and for one never seen since this install was set up.
+	LastSeen  time.Time `json:"last_seen,omitzero"`
+	Reachable bool      `json:"reachable"`
 }
 
 // InstalledApp is one installed app, as the device describes it.

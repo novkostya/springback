@@ -14,6 +14,9 @@ import (
 
 // Service answers the two device questions: what is paired, and what is on it.
 type Service struct {
+	// Cache remembers what a reachable device said, so an offline one still has a name.
+	// Optional: nil simply means an offline device shows its udid, as it used to.
+	Cache    *store.DeviceCache
 	Tools    tools.Tools
 	Resolver *storefront.Resolver
 	Library  *store.Library
@@ -94,13 +97,28 @@ func (s *Service) List(ctx context.Context) ([]tools.Device, error) {
 			defer wg.Done()
 			d := tools.Device{UDID: udid, Reachable: awake[udid]}
 			if d.Reachable {
-				// Only an awake device can be asked. For a sleeping one the udid is
-				// all there is, and the UI names it by that.
+				// Only an awake device can be asked — every one of these is a lockdown
+				// read and lockdown needs the device.
 				d.Name, _ = s.Tools.DeviceValue(ctx, udid, "DeviceName")
 				d.ProductType, _ = s.Tools.DeviceValue(ctx, udid, "ProductType")
 				d.IOS, _ = s.Tools.DeviceValue(ctx, udid, "ProductVersion")
 				d.Region, _ = s.Tools.DeviceValue(ctx, udid, "RegionInfo")
+				if s.Cache != nil {
+					s.Cache.Remember(udid, store.DeviceFacts{
+						Name: d.Name, ProductType: d.ProductType, IOS: d.IOS, Region: d.Region,
+					})
+				}
+			} else if s.Cache != nil {
+				// AND FOR AN OFFLINE DEVICE, WHAT IT SAID LAST TIME. Without this the
+				// udid is all there is, so a phone in someone's pocket renders as forty
+				// characters of hex with no model and no version — which reads as a
+				// fault rather than as a device that is simply elsewhere.
+				if f, ok := s.Cache.Recall(udid); ok {
+					d.Name, d.ProductType, d.IOS, d.Region = f.Name, f.ProductType, f.IOS, f.Region
+					d.LastSeen = f.LastSeen
+				}
 			}
+			d.Model = ModelName(d.ProductType)
 			out[i] = d
 		}(i, udid)
 	}
