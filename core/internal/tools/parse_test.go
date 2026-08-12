@@ -234,3 +234,20 @@ func TestRealPromptFromAFailedLoginStillDetected(t *testing.T) {
 		t.Error("the password prompt was read as a 2FA prompt")
 	}
 }
+
+// TestClassifyLicenseWordings pins BOTH of ipatool's spellings.
+//
+// "license is required" fell through to the raw fallback and put
+// `exit status 1: downloading 0% || ( 0/ 1 B) ERR error="license is required" success=false`
+// in front of a user whose actual problem was "that account does not own this app".
+func TestClassifyLicenseWordings(t *testing.T) {
+	for _, out := range []string{
+		`ERR error="license not found" success=false`,
+		`downloading 0% || ( 0/ 1 B) 4:44AM ERR error="license is required" success=false`,
+		`ERR error="License is required" success=false`,
+	} {
+		if got := classify(out, errors.New("raw")); !errors.Is(got, ErrLicenseNotFound) {
+			t.Errorf("classify(%q) = %v, want ErrLicenseNotFound", out, got)
+		}
+	}
+}

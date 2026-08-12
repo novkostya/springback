@@ -174,7 +174,13 @@
   <section id="screen-app" hidden></section>
 </main>
 
-<div id="toast" hidden></div>
+<!-- role=status + aria-live so a screen reader announces it without stealing focus. The close
+     button is a real button rather than the whole toast being tappable: an error message is
+     something people select and copy, and a tap-anywhere-to-dismiss makes that impossible. -->
+<div id="toast" hidden role="status" aria-live="polite">
+  <span id="toast-text"></span>
+  <button id="toast-close" type="button" aria-label="Dismiss">&times;</button>
+</div>
 
 <script src="/app.js"></script>
 </body>

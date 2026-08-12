@@ -430,7 +430,11 @@ main { padding-bottom: 96px; }
   position: fixed;
   left: 12px;
   right: 12px;
-  bottom: 16px;
+  /* CLEAR OF THE HOME INDICATOR. On a phone with no home button the bottom ~34px belongs to
+     the system, and a bar pinned at `bottom: 16px` sits under it — the last line of a long
+     error was being crossed out by the indicator. env() is 0 on anything without one, so the
+     fallback costs nothing. */
+  bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   margin: 0 auto;
   max-width: 560px;
   background: var(--panel-2);
@@ -440,8 +444,31 @@ main { padding-bottom: 96px; }
   font-size: 13px;
   box-shadow: 0 6px 24px rgba(0, 0, 0, 0.55);
   z-index: 20;
+
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
 }
 #toast.bad { border-color: #7a3427; }
+/* An error can be long and is worth copying, so it wraps and the text is selectable — the id
+   and the tool's own words are what you would paste into an issue. */
+#toast-text { flex: 1; min-width: 0; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
+#toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: 0;
+  color: var(--dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  /* A comfortable target without making the bar taller: the padding is pulled back out with a
+     negative margin, so the × is 44px to a thumb and 20px to the layout. */
+  padding: 12px;
+  margin: -12px -12px -12px 0;
+  min-width: var(--tap);
+  min-height: var(--tap);
+}
+#toast-close:hover { color: var(--ink); }
 
 .spinner::after {
   content: "";

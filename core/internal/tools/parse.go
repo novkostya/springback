@@ -166,7 +166,12 @@ func classify(out string, fallback error) error {
 	switch {
 	case containsAny(l, "auth code is required", "2fa code is required", "two-factor", "verification code", "authcode"):
 		return ErrNeeds2FA
-	case strings.Contains(l, "license not found"):
+	// TWO WORDINGS, BOTH REAL. "license not found" is what ipatool returns for one path and
+	// "license is required" for another — seen in the wild on an id the signed-in account did
+	// not own, where the second spelling fell through to the raw fallback and put
+	// `exit status 1: downloading 0% || ( 0/ 1 B) ERR error="license is required"
+	// success=false` in front of a user whose actual problem was "wrong account".
+	case containsAny(l, "license not found", "license is required", "licence is required"):
 		return ErrLicenseNotFound
 	case strings.Contains(l, "app not found"):
 		return ErrAppNotFound

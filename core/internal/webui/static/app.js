@@ -119,14 +119,27 @@ $("#sign-out").onclick = async () => {
 };
 
 let toastTimer;
+// AN ERROR STAYS UNTIL IT IS DISMISSED; a success goes on its own.
+//
+// They are not the same kind of message. "Archived Aviasales." is worth six seconds and nothing
+// more. A failure is often long, sometimes worth copying, and is the one thing on screen the
+// reader actually has to act on — putting it on a twelve-second fuse meant the interesting ones
+// vanished mid-sentence.
 function toast(msg, bad = false) {
   const t = $("#toast");
-  t.textContent = msg;
+  $("#toast-text").textContent = msg;
   t.hidden = false;
   t.className = bad ? "bad" : "";
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => { t.hidden = true; }, bad ? 12000 : 6000);
+  if (!bad) toastTimer = setTimeout(dismissToast, 6000);
 }
+
+function dismissToast() {
+  clearTimeout(toastTimer);
+  $("#toast").hidden = true;
+}
+
+$("#toast-close").onclick = dismissToast;
 
 const fmtSize = (n) => {
   if (!n) return "—";
