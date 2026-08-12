@@ -41,6 +41,10 @@ func (s *comingAndGoing) ListDeviceUDIDs(context.Context) ([]string, error) {
 func (s *comingAndGoing) PairedUDIDs(context.Context) ([]string, error) {
 	return []string{"UDID-1"}, nil
 }
+
+// The record survives the device going away, which is what makes an offline device still a
+// device. Readable, so List trusts it.
+func (s *comingAndGoing) PairingKnown() bool { return true }
 func (s *comingAndGoing) DeviceValue(_ context.Context, _, key string) (string, error) {
 	if !s.awake {
 		return "", tools.ErrDeviceUnreachable

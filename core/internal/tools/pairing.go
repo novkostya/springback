@@ -60,6 +60,18 @@ var (
 	ErrPairingReadOnly = errors.New("the pairing directory is read-only")
 	// ErrWifiSyncNotApplied — the device accepted the write and still reports the old value.
 	ErrWifiSyncNotApplied = errors.New("the device did not apply the change")
+	// ErrNotPaired — this host holds no pairing record for the device, so springback refused
+	// to open a lockdown session to it.
+	//
+	// THE REFUSAL IS THE POINT, and it is not about tidiness. libimobiledevice's
+	// lockdownd_client_new_with_handshake() PAIRS when validation fails for want of a record —
+	// so `ideviceinfo -k DeviceName`, an apparently read-only question, makes the phone ask
+	// "Trust This Computer?". springback asks that question for four keys on every reachable
+	// device on every scan, which meant plugging a phone in raised a trust prompt nobody asked
+	// for, seconds later, with nothing on screen to explain it. Reported twice.
+	//
+	// Pairing is a deliberate act with a button of its own. Nothing else here may start one.
+	ErrNotPaired = errors.New("this host is not paired with the device")
 )
 
 // PairStatus asks whether this host holds a valid pairing record for the device.
@@ -148,6 +160,48 @@ func (r *Real) pairingWritable() error {
 // rather than offering a button that always fails.
 func (r *Real) PairingWritable() bool { return r.pairingWritable() == nil }
 
+// PairingKnown reports whether the pairing records can be READ — whether "there is no record for
+// this device" is a fact or merely something springback cannot see.
+//
+// The distinction carries real weight, because everything below refuses to touch a device with no
+// record. If the directory is simply not mounted, treating that as "nothing is paired" would
+// refuse every device on the box and produce a completely dead UI out of a missing volume. So a
+// directory that cannot be read means UNKNOWN, and unknown means behave as before.
+func (r *Real) PairingKnown() bool {
+	if r.LockdownDir == "" {
+		return false
+	}
+	_, err := os.ReadDir(r.LockdownDir)
+	return err == nil
+}
+
+// hasPairingRecord is the cheap, local answer to "have we ever paired with this device".
+//
+// A FILE TEST, NOT A DEVICE CALL, and that is the whole point: it is asked before every lockdown
+// session, so it must cost nothing and must not itself talk to the device. `idevicepair validate`
+// would be more authoritative — it asks the device whether the record still works — but it needs
+// the device to be answering, and the case being guarded is exactly the one where reaching the
+// device is what must not happen yet.
+func (r *Real) hasPairingRecord(udid string) bool {
+	if r.LockdownDir == "" || udid == "" {
+		return false
+	}
+	st, err := os.Stat(filepath.Join(r.LockdownDir, udid+".plist"))
+	return err == nil && !st.IsDir()
+}
+
+// requirePaired is the guard in front of every command that opens a lockdown session.
+//
+// It exists because the alternative — remembering, at each of the five call sites, that this
+// particular tool happens to pair as a side effect of being asked a question — is exactly the kind
+// of thing that gets forgotten when a sixth is added.
+func (r *Real) requirePaired(udid string) error {
+	if !r.PairingKnown() || r.hasPairingRecord(udid) {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", ErrNotPaired, udid)
+}
+
 func isReadOnlyFS(err error) bool {
 	return strings.Contains(strings.ToLower(err.Error()), "read-only file system")
 }
@@ -169,6 +223,9 @@ func classifyPair(out string, err error) error {
 
 // WifiSync reads the device's Wi-Fi sync flag.
 func (r *Real) WifiSync(ctx context.Context, udid string) (WifiSyncState, error) {
+	if err := r.requirePaired(udid); err != nil {
+		return WifiSyncUnknown, nil
+	}
 	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "sbwifi", "get", udid)
 	if err != nil {
 		return WifiSyncUnknown, nil // unreachable device, not a fault worth surfacing
@@ -189,6 +246,9 @@ func (r *Real) WifiSync(ctx context.Context, udid string) (WifiSyncState, error)
 // success — while after ENABLING it means nothing was confirmed. The helper reports what it saw;
 // the difference is decided here, because only this layer knows which way the switch was thrown.
 func (r *Real) SetWifiSync(ctx context.Context, udid string, enable bool) error {
+	if err := r.requirePaired(udid); err != nil {
+		return err
+	}
 	want := "off"
 	if enable {
 		want = "on"

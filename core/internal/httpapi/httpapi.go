@@ -694,6 +694,13 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 	case errors.Is(err, tools.ErrNoMuxer):
 		writeErr(w, http.StatusServiceUnavailable, "no_muxer",
 			"No muxer is answering, so no device can be reached. Start usbmuxd or netmuxd — springback does not run one itself, deliberately. Nothing needs restarting here: devices appear on their own within a few seconds of the muxer starting.")
+	case errors.Is(err, tools.ErrNotPaired):
+		// 409, and the remedy is a button on the device's own page. springback refuses to
+		// touch a device it holds no pairing record for, because the tools it drives PAIR as
+		// a side effect of being asked anything — so this refusal is what keeps a trust
+		// prompt from appearing without anyone asking for one.
+		writeErr(w, http.StatusConflict, "not_paired",
+			"This device is not paired with springback yet. Open its page and tap Pair — until then springback will not talk to it, because asking a device anything is what makes it show the Trust prompt.")
 	case errors.Is(err, tools.ErrDeviceUnreachable):
 		writeErr(w, http.StatusConflict, "not_reachable",
 			"The device is not answering. A sleeping iPhone drops off the network entirely — wake it and try again.")

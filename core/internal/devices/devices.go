@@ -81,6 +81,15 @@ func (s *Service) List(ctx context.Context) ([]tools.Device, error) {
 	if err != nil {
 		return nil, err
 	}
+	// hasRecord is the pairing state for every row, free: the records have just been read, and
+	// nothing about them needs the device. Only meaningful when the records are readable at
+	// all — see PairingKnown, and the comment below about what "no record" means when they
+	// are not.
+	recordsKnown := s.Tools.PairingKnown()
+	hasRecord := make(map[string]bool, len(paired))
+	for _, u := range paired {
+		hasRecord[u] = true
+	}
 
 	seen := map[string]bool{}
 	var all []string
@@ -98,7 +107,28 @@ func (s *Service) List(ctx context.Context) ([]tools.Device, error) {
 		go func(i int, udid string) {
 			defer wg.Done()
 			d := tools.Device{UDID: udid, Reachable: awake[udid]}
-			if d.Reachable {
+
+			// THE PAIRING STATE COMES FIRST, BECAUSE IT DECIDES WHETHER THE DEVICE MAY BE
+			// TOUCHED AT ALL. Every read below is a lockdown session, and a lockdown session
+			// with no pairing record PAIRS — libimobiledevice does the handshake to answer
+			// even a read-only question, and the handshake makes the phone ask "Trust This
+			// Computer?". Asking four keys of every reachable device every five seconds meant
+			// plugging a phone in raised a trust prompt nobody asked for. Pairing has a
+			// button; nothing else may start one.
+			//
+			// Unknown when the records cannot be read: then "no record" is not a fact about
+			// the device, and refusing every device over a missing mount would be worse than
+			// the prompt.
+			switch {
+			case !recordsKnown:
+				d.Pair = tools.PairUnknown
+			case hasRecord[udid]:
+				d.Pair = tools.Paired
+			default:
+				d.Pair = tools.Unpaired
+			}
+
+			if d.Reachable && d.Pair != tools.Unpaired {
 				// Only an awake device can be asked — every one of these is a lockdown
 				// read and lockdown needs the device.
 				d.Name, _ = s.Tools.DeviceValue(ctx, udid, "DeviceName")
@@ -151,9 +181,23 @@ func (s *Service) Get(ctx context.Context, udid string) (tools.Device, error) {
 			return d, nil
 		}
 	}
-	// Not in the list at all: no pairing record and not currently visible. Still worth a
-	// page — this is exactly the device someone has just plugged in to pair.
-	return tools.Device{UDID: udid}, nil
+	// Not in the list at all: no pairing record and not currently visible. Still worth a page —
+	// this is exactly the device someone has just plugged in to pair, or one that was unpaired
+	// while its page was open.
+	//
+	// THE CACHE STILL KNOWS WHAT IT IS CALLED, and using it here is what stops the page becoming
+	// forty characters of hex the moment the device leaves the list. The Devices list has always
+	// done this for an offline device; a page reached for the same device should not be a
+	// worse-informed view of it. Reported as two screens disagreeing about the same phone.
+	d := tools.Device{UDID: udid}
+	if s.Cache != nil {
+		if f, ok := s.Cache.Recall(udid); ok {
+			d.Name, d.ProductType, d.IOS, d.Region = f.Name, f.ProductType, f.IOS, f.Region
+			d.LastSeen = f.LastSeen
+			d.Model = ModelName(d.ProductType)
+		}
+	}
+	return d, nil
 }
 
 // Apps lists a device's user apps with a store status each.

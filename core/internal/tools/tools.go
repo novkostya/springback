@@ -40,6 +40,16 @@ type Device struct {
 	// answering now, and for one never seen since this install was set up.
 	LastSeen  time.Time `json:"last_seen,omitzero"`
 	Reachable bool      `json:"reachable"`
+	// Pair says whether this host holds a pairing record for the device, from the records
+	// alone — no call to the device, so it costs nothing and is available for every row.
+	//
+	// IN THE LIST, NOT JUST ON THE PAGE, because it changes what the row MEANS. An unpaired
+	// device is on the cable and visible and can do nothing until somebody pairs it, and
+	// labelling that "reachable" alongside devices that actually work invites the reading
+	// that springback is broken. It also decides whether the device may be touched at all:
+	// everything else here opens a lockdown session, and a lockdown session with no record
+	// pairs. See ErrNotPaired.
+	Pair PairState `json:"pair,omitempty"`
 }
 
 // InstalledApp is one installed app, as the device describes it.
@@ -201,6 +211,11 @@ type Tools interface {
 	// PairingWritable reports whether pairing records can be written at all. False when the
 	// directory is mounted read-only, which is the right setup when another tool owns it.
 	PairingWritable() bool
+	// PairingKnown reports whether the pairing records can be READ. False means springback
+	// cannot tell a device it has never paired with from one whose record it simply cannot
+	// see — a missing mount rather than an unpaired phone — and callers must then behave as
+	// though every device might be paired rather than refusing them all.
+	PairingKnown() bool
 	// Transport reports how a device was last seen: "usb" or "network". Pairing needs the
 	// cable, and the UI says so rather than offering a button that cannot work.
 	Transport(udid string) string

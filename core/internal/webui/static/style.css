@@ -235,6 +235,9 @@ body.gated > #insecure-banner { display: none; }
 .pill.offline { border-color: #5b4a2e; color: #c9a66b; }
 .pill.live { border-color: #40563a; color: #9dbb8a; }
 .pill.risk { border-color: #7a3427; color: #f0a08e; background: #2e1a15; }
+/* Not paired: needs an action, so it reads as louder than `offline` — which needs nothing but
+   patience — without borrowing the red that `risk` uses for an app about to be lost for good. */
+.pill.unpaired { border-color: #7a5a2a; color: #e0ae63; background: #2b2113; }
 
 .status { font-size: 10.5px; padding: 2px 7px; border-radius: 4px; white-space: nowrap; }
 .status.delisted { background: #4a1f16; color: #ffb9a6; font-weight: 600; letter-spacing: 0.03em; }

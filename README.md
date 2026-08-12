@@ -63,10 +63,12 @@ deliberately does not contain one, which leaves you one decision to make first.
 ### Check whether you already have a muxer
 
 ```sh
-test -S /var/run/usbmuxd && echo "yes — there is a muxer socket here"
-systemctl is-enabled usbmuxd 2>/dev/null    # often socket- or udev-activated, so the socket
-                                            # may only appear once a device is plugged in
+ss -lx | grep usbmux    # anything listed here is a muxer, and there should be at most one
 ```
+
+Ask what is *listening*, not what exists: a `usbmuxd` that has been stopped leaves its socket file
+behind, so `test -S /var/run/usbmuxd` says yes on a box with no muxer running at all. Measured on
+a machine where the service was masked and the stale file was still sitting there.
 
 **Exactly one muxer may own the USB bus, and this is the single thing most likely to waste your
 afternoon.** `usbmuxd` is a dependency of libimobiledevice, so plenty of distributions already

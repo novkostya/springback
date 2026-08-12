@@ -22,12 +22,29 @@ func (s *Server) deviceDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := s.Tools.PairStatus(r.Context(), udid)
-	if err != nil {
-		// Not fatal: the rest of the page is still worth drawing, and "unknown" is an
-		// honest thing to show for a device that would not answer.
-		s.Log.Debug("pair status failed", "udid", udid, "err", err)
-		pair = tools.PairUnknown
+	// THE RECORDS ANSWER FIRST, AND ONLY THEN THE DEVICE.
+	//
+	// `idevicepair validate` asks the DEVICE whether the record still works, which is the better
+	// question — and useless for the case that matters, because a muxer will not connect to a
+	// device it holds no record for. It returns "No device found", springback read that as
+	// "could not ask", and the page said *Pairing state unknown — the device is not answering*
+	// about a phone sitting on the cable in plain sight. Reported with a screenshot.
+	//
+	// Having no record IS the answer to "is this host paired", and it needs nothing from the
+	// device to know it. Validate is then only asked when a record exists, which is exactly when
+	// it can be trusted to reply.
+	pair := dev.Pair
+	if pair == tools.Paired {
+		got, err := s.Tools.PairStatus(r.Context(), udid)
+		if err != nil {
+			// Not fatal: the rest of the page is still worth drawing, and a record that
+			// exists is better evidence than a device that would not answer.
+			s.Log.Debug("pair status failed", "udid", udid, "err", err)
+		} else if got != tools.PairUnknown {
+			// A record that the device rejects — restored from a backup, or the phone was
+			// wiped — is genuinely unpaired, and only the device can say so.
+			pair = got
+		}
 	}
 
 	// Only asked of a device that is actually paired and awake. On an unpaired device the read

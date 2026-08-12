@@ -37,6 +37,9 @@ func safeBundleID(id string) bool {
 // a directory can be listed, opened and looked at by a person trying to work out why an icon is
 // missing. The directory is this process's own, so nothing outside can read the icons out of it.
 func (r *Real) DeviceIcons(ctx context.Context, udid string, bundleIDs []string) (map[string][]byte, error) {
+	if err := r.requirePaired(udid); err != nil {
+		return nil, err
+	}
 	wanted := make([]string, 0, len(bundleIDs))
 	for _, b := range bundleIDs {
 		if safeBundleID(b) {

@@ -219,7 +219,17 @@ func (r *Real) PairedUDIDs(ctx context.Context) ([]string, error) {
 	return udids, nil
 }
 
+// DeviceValue reads one lockdown key.
+//
+// GUARDED, AND THIS IS THE ONE THAT CAUSED THE BUG. `ideviceinfo -k DeviceName` looks like a
+// read-only question and is not: libimobiledevice does a lockdown HANDSHAKE to ask it, and a
+// handshake with no pairing record pairs. springback asks four keys of every reachable device on
+// every scan, so a phone plugged into the box raised "Trust This Computer?" within seconds, with
+// nothing on any screen to explain why. See ErrNotPaired.
 func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error) {
+	if err := r.requirePaired(udid); err != nil {
+		return "", err
+	}
 	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "", "ideviceinfo", append(r.netFlag(udid), "-u", udid, "-k", key)...)
 	if err != nil {
 		return "", err
@@ -238,6 +248,9 @@ func (r *Real) DeviceValue(ctx context.Context, udid, key string) (string, error
 // if it does, the right outcome is a Devices screen that still lists apps and merely asks for an
 // id, not an empty screen. Degrading beats disappearing.
 func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error) {
+	if err := r.requirePaired(udid); err != nil {
+		return nil, err
+	}
 	out, err := r.run(ctx, r.DeviceTimeout, r.deviceEnv(), "",
 		"ideviceinstaller", append(r.netFlag(udid), "-u", udid, "list", "--user", "--xml",
 			"-a", "CFBundleIdentifier",
@@ -268,6 +281,9 @@ func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error
 }
 
 func (r *Real) InstallApp(ctx context.Context, udid, ipaPath string, onProgress func(InstallProgress)) error {
+	if err := r.requirePaired(udid); err != nil {
+		return err
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.InstallTimeout)
 	defer cancel()
 

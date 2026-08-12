@@ -283,7 +283,7 @@ async function applyJobs(list) {
 
   // Re-render while jobs are running so the in-row rings advance, and once more when one
   // ends so the row settles into its finished state.
-  if (runningJobs.length || finished) rerenderCurrent();
+  if (runningJobs.length || finished) dataChanged();
 }
 
 // pollJobs is the fallback: it runs only while the socket is down, and stops as soon as nothing
@@ -351,7 +351,9 @@ function applyDevices(list) {
   // A device coming or going changes more than the list: its pairing state and transport are
   // read separately and go stale with it.
   if (current === "device" && deviceUDID) loadDeviceState(deviceUDID);
-  if (current === "devices" || current === "app" || current === "device") rerenderCurrent();
+  // EVERY screen that draws devices, not just the one in front of you — the others are marked
+  // and rebuilt on the way back, which is what stops the list and the device page disagreeing.
+  dataChanged();
   return true;
 }
 
@@ -464,15 +466,31 @@ function deviceRow(d) {
       }),
     ]),
     el("div", { className: "row-right" }, [
-      d.reachable
-        ? el("span", { className: "pill live", textContent: "reachable" })
-        // "not currently reachable", never "gone": a sleeping iPhone drops off mDNS
-        // entirely, and that is normal.
-        : el("span", { className: "pill offline", textContent: "offline" }),
+      devicePill(d),
       el("span", { className: "chev", textContent: "›" }),
     ]),
   ]);
   return r;
+}
+
+// devicePill is the one-word verdict on a row, and NOT PAIRED OUTRANKS REACHABLE.
+//
+// An unpaired device is on the cable, listed, and can do absolutely nothing: springback will not
+// read its name, its apps or anything else, because asking a device a question is what makes it
+// show the Trust prompt. Calling that "reachable" next to devices that work invites the reading
+// that springback is broken — the row looks identical to a working one and behaves like nothing.
+//
+// It cannot be both, either: a device with no pairing record only appears in the list at all
+// because it is plugged in, so "unpaired and offline" is not a state that exists.
+function devicePill(d) {
+  if (d.pair === "unpaired") {
+    return el("span", { className: "pill unpaired", textContent: "not paired" });
+  }
+  return d.reachable
+    ? el("span", { className: "pill live", textContent: "reachable" })
+    // "not currently reachable", never "gone": a sleeping iPhone drops off mDNS entirely,
+    // and that is normal.
+    : el("span", { className: "pill offline", textContent: "offline" });
 }
 
 // ---------------------------------------------------------------------------
@@ -539,9 +557,7 @@ function renderDevice() {
 
   const head = el("div", { className: "detail-head" }, [
     el("h2", { className: "screen", textContent: deviceLabel(d) }),
-    d.reachable
-      ? el("span", { className: "pill live", textContent: "reachable" })
-      : el("span", { className: "pill offline", textContent: "offline" }),
+    devicePill(d),
     refresh,
   ]);
 
@@ -657,6 +673,17 @@ function pairingBlock(udid, st) {
 // appsBlock is the at-risk scan, its summary, and the search box over it.
 function appsBlock(udid, d, payload) {
   const out = [el("h3", { className: "sub-head", textContent: "Apps" })];
+
+  // NOT EVEN A REQUEST FOR AN UNPAIRED DEVICE. Listing apps opens a lockdown session, and a
+  // lockdown session with no pairing record is what raises the Trust prompt — so simply opening
+  // this page would have started a pairing nobody asked for. The server refuses too; this is the
+  // half that explains why rather than showing the refusal as an error.
+  if (d.pair === "unpaired") {
+    out.push(el("p", { className: "note plain", textContent:
+      "Pair this device first — springback does not ask an unpaired device anything, because " +
+      "asking is what makes it show the Trust prompt." }));
+    return out;
+  }
 
   if (!d.reachable) {
     out.push(el("p", { className: "note plain", textContent:
@@ -1484,8 +1511,17 @@ async function renderRoute(url, { traverse = false } = {}) {
   // rebuilding it here would empty the screen for the duration of the gesture and refill it at
   // the end — which is the blank-swipe symptom. A screen that has never been built still has to
   // be, hence the emptiness check rather than a blanket skip.
+  //
+  // UNLESS IT WENT STALE WHILE YOU WERE AWAY, and that exception is not a refinement — it is the
+  // fix for two screens contradicting each other. Only the CURRENT screen is redrawn when data
+  // changes; a change that lands while the device page is open leaves the Devices list holding
+  // the DOM it had before, and a back gesture then reveals it unchanged, possibly for good, since
+  // the next redraw only happens on the next change. Reported with two screenshots of the same
+  // phone: "reachable" with its name in the list, "offline" with a bare udid on its own page.
   const root = $(`#screen-${route.screen}`);
-  if (!traverse || root.childElementCount === 0) renderScreen(route.screen);
+  if (!traverse || root.childElementCount === 0 || stale.has(route.screen)) {
+    renderScreen(route.screen);
+  }
 }
 
 // THE HEADER IS NOW INVARIANT. Nothing in it changes between screens except which tab is
@@ -1510,11 +1546,27 @@ function parentTab() {
 }
 
 function renderScreen(screen) {
+  stale.delete(screen);
   if (screen === "devices") renderDevices();
   if (screen === "library") renderLibrary();
   if (screen === "accounts") refreshAccounts().then(renderAccountsList);
   if (screen === "device") renderDevice();
   if (screen === "app") renderAppDetail();
+}
+
+// stale is the set of screens whose DOM no longer matches the data behind it.
+//
+// EVERY SCREEN READS THE SAME `devices` ARRAY, so any two of them showing different things is
+// always a redraw that did not happen rather than two sources disagreeing. Marking them here and
+// rebuilding on the way back in is what keeps them in step without redrawing a two-hundred-row
+// app list every five seconds for a screen nobody is looking at.
+const stale = new Set();
+
+// dataChanged: the device list, the jobs or the library moved. Redraw what is on screen now, and
+// remember that everything else is behind.
+function dataChanged() {
+  for (const s of ["devices", "library", "device", "app"]) stale.add(s);
+  rerenderCurrent();
 }
 
 // rerenderCurrent is what the pollers call — never a navigation, just fresher data.
@@ -1526,10 +1578,16 @@ function renderScreen(screen) {
 // own; the device page only while its search field has the focus, since its pairing state and
 // reachability genuinely do change underneath.
 function rerenderCurrent() {
-  if (current === "devices") renderDevices();
-  if (current === "library") renderLibrary();
-  if (current === "app") renderAppDetail();
-  if (current === "device" && document.activeElement !== $("#app-search")) renderDevice();
+  // Each of these clears its own staleness, and the two that are skipped keep theirs — so a
+  // device page left alone because someone is typing in its search box is rebuilt the next time
+  // it is opened rather than staying wrong.
+  if (current === "devices") { stale.delete("devices"); renderDevices(); }
+  if (current === "library") { stale.delete("library"); renderLibrary(); }
+  if (current === "app") { stale.delete("app"); renderAppDetail(); }
+  if (current === "device" && document.activeElement !== $("#app-search")) {
+    stale.delete("device");
+    renderDevice();
+  }
 }
 
 // navigate is used only where a link cannot be (a row that is really a button).

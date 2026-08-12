@@ -49,6 +49,11 @@ func (s *stubTools) PairedUDIDs(context.Context) ([]string, error) {
 	return s.ListDeviceUDIDs(context.Background())
 }
 
+// PairingKnown true, and PairedUDIDs returns the same set as ListDeviceUDIDs, so every stub
+// device counts as paired — otherwise List would refuse to read its name, which is what these
+// tests watch for a change in.
+func (s *stubTools) PairingKnown() bool { return true }
+
 func (s *stubTools) DeviceValue(_ context.Context, udid, key string) (string, error) {
 	if key == "DeviceName" {
 		return "phone-" + udid, nil

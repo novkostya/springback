@@ -196,8 +196,11 @@ func (f *Fake) ListDeviceUDIDs(ctx context.Context) ([]string, error) {
 func (f *Fake) PairedUDIDs(ctx context.Context) ([]string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	// Only devices with a record — so unpairing one in the UI takes it out of the paired set,
+	// exactly as deleting the .plist does on a real box. Returning every device regardless made
+	// Unpair look like it had done nothing.
 	out := make([]string, 0, len(f.devices))
-	for udid := range f.devices {
+	for udid := range f.pairedRecords() {
 		out = append(out, udid)
 	}
 	return out, nil
@@ -596,6 +599,23 @@ func (f *Fake) Unpair(ctx context.Context, udid string) error {
 // PairingWritable is true here: the fake is for exercising the flow, and the read-only case is a
 // deployment fact with no device behind it. main.go reports the real answer.
 func (f *Fake) PairingWritable() bool { return true }
+
+// PairingKnown is true: the fake's `unpaired` map IS its pairing-record directory, and it is
+// always readable. The false case is a missing mount, which has no meaning without a filesystem.
+func (f *Fake) PairingKnown() bool { return true }
+
+// PairedUDIDsExcludingUnpaired is what the record directory would contain — every device except
+// the ones Unpair has been called on. Kept in step with PairStatus so the fake cannot drift into
+// saying a device is unpaired on its page while listing a record for it.
+func (f *Fake) pairedRecords() map[string]bool {
+	out := map[string]bool{}
+	for udid := range f.devices {
+		if !f.unpaired[udid] {
+			out[udid] = true
+		}
+	}
+	return out
+}
 
 func (f *Fake) WifiSync(ctx context.Context, udid string) (WifiSyncState, error) {
 	f.mu.Lock()
