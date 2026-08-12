@@ -348,6 +348,10 @@ button[disabled] { opacity: 0.45; cursor: default; }
   font-size: 12.5px;
 }
 .note.warn-note { background: #2e1a15; border-color: #7a3427; }
+/* A NEUTRAL note, for something that is neither reassuring nor alarming. The green above says
+   "nothing is wrong here", which is right for an app that never had a store listing and wrong
+   for a capability that is switched off — that should be noticed, not soothed. */
+.note.plain { background: var(--panel); border-color: var(--line); }
 .error {
   background: #2e1a15;
   border: 1px solid #7a3427;

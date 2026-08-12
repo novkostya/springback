@@ -402,7 +402,7 @@ function pairingBlock(udid, st) {
   if (st.can_pair === false) {
     // A read-only pairing directory is the correct setup when something else owns the
     // records, so this explains rather than complains.
-    out.push(el("p", { className: "note", textContent:
+    out.push(el("p", { className: "note plain", textContent:
       "The pairing directory is mounted read-only, so springback can read pairing records but not write them. " +
       "Pair the device with whatever owns them, or mount it read-write." }));
   }
@@ -484,7 +484,7 @@ function appsBlock(udid, d, payload) {
   const out = [el("h3", { className: "sub-head", textContent: "Apps" })];
 
   if (!d.reachable) {
-    out.push(el("p", { className: "note", textContent:
+    out.push(el("p", { className: "note plain", textContent:
       "This device is not answering, so its apps cannot be listed. A sleeping iPhone drops off the network entirely; wake it and come back." }));
     return out;
   }
