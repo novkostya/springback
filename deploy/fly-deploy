@@ -83,11 +83,77 @@ fi
 version=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)
 set -- "$@" --build-arg "VERSION=demo-${version}"
 
-# --ha=false because fly's default for a first deploy is TWO machines. Two would each seed their
-# own throwaway state and each hold their own sessions, so a visitor would be load-balanced between
-# two different demos — and pay for two. One machine, asleep most of the time, is the design.
+app=$(sed -n 's/^app *= *"\(.*\)"/\1/p' fly.toml | head -n 1)
+[ -n "$app" ] || { echo "fly-deploy: no app name in fly.toml" >&2; exit 2; }
+
+# machine_count prints the number of machines, or nothing at all if it cannot find out.
+#
+# THE DIFFERENCE BETWEEN "WRONG" AND "UNKNOWN" IS THE WHOLE DESIGN HERE. A deploy token is narrow
+# by design and may not be allowed to list machines; jq may be absent. Neither is a broken topology,
+# and failing a nightly deploy on an unverified assumption about flyctl's output shape would be a
+# worse bug than the one this guards. So: silence means "could not check", and the caller says so
+# out loud rather than treating it as a pass.
+machine_count() {
+	command -v jq >/dev/null 2>&1 || return 0
+	out=$(flyctl machines list -a "$app" --json 2>/dev/null) || return 0
+	printf '%s' "$out" | jq -e 'if type == "array" then length else empty end' 2>/dev/null || return 0
+}
+
+# EXACTLY ONE MACHINE, AND IT IS A CORRECTNESS CONSTRAINT RATHER THAN A BILL.
+#
+# quince ran its demo on two and login became a coin flip (quince#636): sessions live in each
+# machine's own memory, so a login lands on machine A, the next request lands on machine B, and B
+# has never heard of that session — "I pressed Sign in and it put me back on Sign in". springback is
+# the same shape and then some, because each machine also seeds its OWN /tmp/springback-demo, so the
+# library would differ between refreshes.
+#
+# What makes it worth a check rather than a note: the logs of neither machine show anything wrong.
+# A logs a successful login; B logs a routine 401 for an unknown session, indistinguishable from an
+# expired cookie. The defect exists only in the pair, and reading one machine's log — the natural
+# thing to do — cannot find it.
+#
+# THE COUNT IS NOT EXPRESSIBLE IN fly.toml. There is no count key; auto_stop_machines and
+# min_machines_running shape behaviour without capping it. So the constraint is carried entirely by
+# whoever last ran `fly scale count`, and a scale-up would reintroduce this silently. quince filed
+# the enforcement as quince#637 and it is still open; this is that check, before the deploy rather
+# than after the incident.
+n=$(machine_count)
+case "$n" in
+"") echo "fly-deploy: could not read the machine count (no jq, or the token may not list machines)." >&2
+    echo "            Check by hand: flyctl machines list -a $app — it must be exactly one." >&2 ;;
+0|1) : ;; # 0 is a first deploy: there is nothing there yet.
+*)  if [ "${SPRINGBACK_ALLOW_MANY_MACHINES:-}" = 1 ]; then
+	echo "fly-deploy: $n machines, continuing because SPRINGBACK_ALLOW_MANY_MACHINES=1." >&2
+    else
+	echo "fly-deploy: REFUSING — $app is running $n machines and this demo requires exactly one." >&2
+	echo "            Sessions live in each machine's memory and each seeds its own state, so" >&2
+	echo "            visitors are balanced between two different demos and login works or not" >&2
+	echo "            depending on which one answers. Neither machine's log shows anything wrong." >&2
+	echo "            Fix:  flyctl scale count 1 -a $app" >&2
+	echo "            Override, deliberately:  SPRINGBACK_ALLOW_MANY_MACHINES=1 $0" >&2
+	exit 1
+    fi ;;
+esac
+
+# --ha=false because fly's default for a FIRST deploy is two machines — the same two this refuses
+# above, so without it the first deploy would create the state the next one rejects.
 #
 # --remote-only: this image builds ipatool, ideviceinstaller and two small C programs from source.
 # fly's builder does it with a warm cache; a GitHub runner would do it from cold every night.
-echo "fly-deploy: deploying $version"
-exec flyctl deploy --remote-only --ha=false "$@"
+echo "fly-deploy: deploying $version to $app"
+flyctl deploy --remote-only --ha=false "$@"
+
+# And again afterwards, because the deploy itself is the thing most likely to have added one.
+#
+# ONLY "TOO MANY" IS A FAULT HERE. Zero is not: it is what a stub, an API still catching up, or a
+# deploy flyctl has already reported as failed all look like — and the first run of this script
+# exited 1 on exactly that, having deployed successfully. A guard that fails the first deploy of
+# every new app is a guard nobody keeps.
+n=$(machine_count)
+case "$n" in
+""|0|1) : ;;
+*) echo >&2
+   echo "fly-deploy: WARNING — $app now has $n machines. The deploy succeeded, but the demo is" >&2
+   echo "            only correct at one: flyctl scale count 1 -a $app" >&2
+   exit 1 ;;
+esac

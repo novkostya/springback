@@ -17,6 +17,7 @@ on it is a fixture, and nothing it does reaches Apple.
 | mode | `--public-demo`, which **forces** the fake tool layer |
 | password | `springback-demo`, printed on the login screen |
 | state | throwaway, under `/tmp/springback-demo`, wiped and re-seeded at every process start |
+| machines | **exactly one** — `fly scale count 1`. Not expressible in `fly.toml`; see below |
 | address | `springback-demo.fly.dev` |
 
 ## Deploying it
@@ -68,6 +69,39 @@ that belongs to the demo. Before the paths were swapped, `--public-demo` with a 
 mounted wrote a fake Apple ID into the accounts store and a fake .ipa into the archive — measured,
 not imagined, and anybody may run this flag to see what the demo looks like, including on the box
 that holds everything they have saved. Now those mounts are ignored entirely.
+
+## Exactly one machine, and it is correctness rather than cost
+
+```sh
+fly scale count 1 -a springback-demo
+```
+
+quince ran its demo on two and **login became a coin flip** (quince#636). Sessions live in each
+machine's memory, so:
+
+```
+POST /api/auth/login   -> machine A    200, sets the cookie on A
+GET  /api/devices      -> machine B    B has never heard of that session -> 401 -> back to Sign in
+```
+
+springback is the same shape and then some: each machine also seeds its **own**
+`/tmp/springback-demo`, so the library and accounts differ depending on which machine answers.
+
+The part worth keeping is why it is hard to diagnose. **Neither machine's log shows anything
+wrong.** A logs a successful login; B logs a routine 401 for an unknown session, indistinguishable
+from an expired cookie. The defect exists only in the pair, and reading one machine's log — the
+natural thing to do — cannot find it. It presents as "I pressed Sign in and it put me back on Sign
+in", intermittently, and appears to fix itself on a retry that happens to land on the same machine.
+
+**The count is not expressible in `fly.toml`.** There is no count key; `auto_stop_machines` and
+`min_machines_running` shape behaviour without capping it. So the constraint is carried by whoever
+last ran `fly scale count`, which is why `deploy/fly-deploy` refuses to deploy onto more than one
+and says how to fix it. Override deliberately with `SPRINGBACK_ALLOW_MANY_MACHINES=1` if you ever
+need to.
+
+If the deploy token turns out not to be allowed to list machines, the script says so and deploys
+anyway — "could not check" is not "checked and fine", and failing a nightly deploy on an
+unverified assumption would be worse than the gap it guards.
 
 ## What the demo is seeded with
 

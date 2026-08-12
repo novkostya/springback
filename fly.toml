@@ -58,6 +58,12 @@ primary_region = "fra"
   # clock and turn a near-free demo into a billed one. The cost of leaving it out is that
   # `fly deploy` does not wait for the app to answer before reporting success.
 
+# THE MACHINE COUNT IS NOT HERE, AND CANNOT BE. There is no count key in fly.toml: the keys above
+# shape when a machine sleeps and wakes, not how many exist. It is `fly scale count 1`, an action
+# against the app, and this demo is only CORRECT at one — sessions live in each machine's memory and
+# each seeds its own state, so two machines are two different demos and login lands on whichever
+# answers. deploy/fly-deploy refuses rather than leaving it to memory; deploy/demo.md has the
+# symptom, which is intermittent and shows up in neither machine's log.
 [[vm]]
   size = "shared-cpu-1x"
   # 256mb is the floor for a shared CPU. The demo serves fixtures, starts no muxer, and never
