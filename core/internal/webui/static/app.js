@@ -186,13 +186,20 @@ $("#gate-form").onsubmit = async (ev) => {
 };
 
 $("#sign-out").onclick = async () => {
-  // Up FIRST, before any await. Whatever happens next, the screen must not still be showing
-  // somebody's devices while a request is in flight.
-  showGate("needs_login");
-  try { await api("/api/auth/logout", { method: "POST" }); } catch { /* going anyway */ }
-  // Then a real reload rather than a route change: dropping every scrap of data already
-  // rendered is the point of signing out, and only a new document guarantees it.
+  // BLANK, NOT THE LOGIN FORM. The screen must not still be showing somebody's devices while the
+  // request is in flight — but drawing the gate here put a login form on screen that is NOT the
+  // one about to load. The reload does happen (measured: one load event, and the URL returns to
+  // "/"), and this is what made it look as though it did not: the form appeared instantly, so the
+  // whole thing read as an in-page transition, and a password manager will not offer to fill a
+  // form that was uncovered by script. Now the only login form anyone sees is the loaded one.
   leaving = true;
+  dropLive();
+  document.body.classList.add("gated");
+  $("#gate").hidden = true;
+  try { await api("/api/auth/logout", { method: "POST" }); } catch { /* going anyway */ }
+  // A real navigation rather than a route change: dropping every scrap of data already rendered
+  // is the point of signing out, and only a new document guarantees it. `leaving` was set before
+  // the request so the router cannot intercept this even if something above threw.
   location.href = "/";
 };
 

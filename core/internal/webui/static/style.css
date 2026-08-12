@@ -3,6 +3,13 @@
    on a phone and the handful that matter impossible to miss. */
 
 :root {
+  /* THE BROWSER HAS TO BE TOLD. Everything here is painted dark by hand, but the parts the
+     browser draws itself — a <select>'s chevron, scrollbars, focus rings, the caret — follow
+     color-scheme, which defaults to light. So the account picker had a black arrow on a black
+     field: invisible, and the only clue that the row was a menu at all. Reported.
+     One line, and it covers every native control rather than each one being restyled. */
+  color-scheme: dark;
+
   --bg: #12100e;
   --panel: #1c1917;
   --panel-2: #262220;
@@ -389,9 +396,21 @@ button[disabled] { opacity: 0.45; cursor: default; }
 .quiet-actions button.link { padding-left: 0; }
 
 /* A control inside a facts row: the Wi-Fi switch sits beside its value, not under a heading. */
-button.link.plain.inline {
-  padding: 0 0 0 10px;
+/* An action inside a facts row — "Unpair", "Turn off" — sitting beside the value it changes.
+   ANY .link.inline, NOT just .plain.inline: Unpair is `link danger inline` and never matched the
+   earlier selector, so it kept the base button's 6px/4px padding and its own font size. That is
+   what put it a pixel off the baseline of the text next to it and gave it a different gap from
+   the Wi-Fi row's. Reported.
+
+   font-size and line-height INHERIT so the two sit on one baseline by construction rather than by
+   a nudge, and the margin is the gap — padding would push the underline out with it. */
+button.link.inline {
+  font-size: inherit;
+  line-height: inherit;
+  padding: 0;
   min-height: 0;
+  margin-left: 12px;
+  vertical-align: baseline;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
