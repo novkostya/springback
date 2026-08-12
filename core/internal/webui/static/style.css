@@ -380,6 +380,20 @@ button[disabled] { opacity: 0.45; cursor: default; }
 .list-foot button.link { padding-left: 0; }
 .list-foot .hint { margin: 0; max-width: 60ch; }
 
+/* A rare, hard-to-undo action — Unpair — kept as small print under the state it belongs to,
+   rather than as a full-width button competing with Pair. */
+.quiet-actions { margin: 2px 0 4px; }
+.quiet-actions button.link { padding-left: 0; }
+
+/* A control inside a facts row: the Wi-Fi switch sits beside its value, not under a heading. */
+button.link.plain.inline {
+  padding: 0 0 0 10px;
+  min-height: 0;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.dim { color: var(--dim); }
+
 .empty { color: var(--dim); padding: 20px 0; }
 .hint { color: var(--dim); font-size: 12px; }
 .hint.spaced { margin-top: 18px; }
@@ -667,6 +681,10 @@ body { padding-top: var(--header-h); }
 .sk-line { height: 13px; }
 .sk-line.sk-sub { height: 10px; margin-top: 7px; }
 .sk-pill { width: 74px; height: 18px; border-radius: 999px; flex-shrink: 0; }
+/* The app-list skeleton: an icon tile and a status chip, matching the real row so nothing moves
+   when half a minute of scanning finally lands. */
+.sk-icon { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; }
+.sk-chip { width: 62px; height: 16px; border-radius: 4px; flex-shrink: 0; }
 .sk-card .row, .sk-list .row { cursor: default; }
 
 @keyframes sk-shimmer {

@@ -602,14 +602,61 @@ function renderDevice() {
   // about nothing — and the row above already says how it is connected.
   if (!d.reachable && d.last_seen) fact("Last seen", fmtDate(d.last_seen));
 
+  // WI-FI SYNC IS A FACT ABOUT THE DEVICE, so it lives with the other facts rather than in a
+  // section of its own. A heading, a paragraph and a full-width button gave a switch nobody
+  // touches from one month to the next the same weight as the thing the page is for — and it
+  // reads as an action to take rather than a setting that already has a value. As a row it says
+  // what it is, and the way to change it is beside it in small type.
+  if ((st.pair || d.pair) === "paired") facts.push(wifiFact(udid, st));
+
   const blocks = [back, head, el("dl", { className: "facts" }, facts)];
   blocks.push(...pairingBlock(udid, st, transport));
   blocks.push(...appsBlock(udid, d, payload));
   root.replaceChildren(...blocks);
 }
 
+// wifiFact is the Wi-Fi sync row: the value, and a quiet way to change it.
+//
+// The warning stays, but only where it matters — on the confirm, at the moment somebody is about
+// to turn it off. It was a permanent paragraph explaining a consequence that had not happened.
+function wifiFact(udid, st) {
+  const wifi = st.wifi_sync || "unknown";
+  const dd = el("dd");
+
+  if (wifi === "unknown") {
+    dd.append(el("span", { className: "dim", textContent: "could not be read" }));
+  } else {
+    const on = wifi === "on";
+    dd.append(el("span", { textContent: on ? "On" : "Off — this device answers only over USB" }));
+    const b = el("button", { className: "link plain inline", type: "button",
+      textContent: on ? "Turn off" : "Turn on" });
+    b.onclick = async () => {
+      if (on && !confirm("Turn Wi-Fi sync off? The device will leave the network entirely and only answer when it is plugged in.")) return;
+      b.disabled = true;
+      const was = b.textContent;
+      b.textContent = "…";
+      try {
+        await api(`/api/devices/${encodeURIComponent(udid)}/wifi-sync`, {
+          method: "POST", body: JSON.stringify({ enable: !on }),
+        });
+        toast(on ? "Wi-Fi sync off." : "Wi-Fi sync on.");
+      } catch (e) { toast(e.message, true); }
+      b.disabled = false;
+      b.textContent = was;
+      await loadDeviceState(udid);
+    };
+    dd.append(b);
+  }
+  return el("div", { className: "fact" }, [el("dt", { textContent: "Wi-Fi sync" }), dd]);
+}
+
 // pairingBlock is the settings half of the page: is this host trusted by the device, and will
 // the device answer when it is not plugged in.
+//
+// PAIR IS PROMINENT AND UNPAIR IS NOT, deliberately. Pairing is the one thing standing between a
+// new device and everything else on this page, and it is done once. Unpairing is rare, hard to
+// undo — it needs physical access and a cable — and had exactly the same full-width weight, which
+// is an invitation to the wrong button.
 function pairingBlock(udid, st, transport) {
   const out = [el("h3", { className: "sub-head", textContent: "Pairing" })];
 
@@ -650,7 +697,7 @@ function pairingBlock(udid, st, transport) {
   }
 
   if (pair === "paired" && st.can_pair !== false) {
-    const b = el("button", { className: "danger wide", textContent: "Unpair" });
+    const b = el("button", { className: "link danger", type: "button", textContent: "Unpair" });
     b.onclick = async () => {
       if (!confirm("Unpair this device? springback will not be able to reach it again until it is paired over USB.")) return;
       b.disabled = true;
@@ -661,38 +708,11 @@ function pairingBlock(udid, st, transport) {
       b.disabled = false;
       await loadDeviceState(udid);
     };
-    out.push(b);
+    // On its own line and left-aligned with the text above it, so it reads as the small print of
+    // the pairing state rather than as something to do next.
+    out.push(el("div", { className: "quiet-actions" }, [b]));
   }
 
-  // Wi-Fi sync is only meaningful once paired: reading the flag needs a trusted session, and
-  // writing it needs one too.
-  if (pair === "paired") {
-    out.push(el("h3", { className: "sub-head", textContent: "Wi-Fi sync" }));
-    const wifi = st.wifi_sync || "unknown";
-    out.push(el("p", { className: "hint", textContent:
-      "With this off the device only answers over USB — it drops off the network entirely, and springback stops seeing it." }));
-
-    if (wifi === "unknown") {
-      out.push(el("p", { className: "hint", textContent: "Could not read the setting from this device." }));
-    } else {
-      const on = wifi === "on";
-      const b = el("button", { className: on ? "danger wide" : "primary wide",
-        textContent: on ? "Turn Wi-Fi sync off" : "Turn Wi-Fi sync on" });
-      b.onclick = async () => {
-        if (on && !confirm("Turn Wi-Fi sync off? The device will leave the network and only answer over USB.")) return;
-        b.disabled = true;
-        try {
-          await api(`/api/devices/${encodeURIComponent(udid)}/wifi-sync`, {
-            method: "POST", body: JSON.stringify({ enable: !on }),
-          });
-          toast(on ? "Wi-Fi sync off." : "Wi-Fi sync on.");
-        } catch (e) { toast(e.message, true); }
-        b.disabled = false;
-        await loadDeviceState(udid);
-      };
-      out.push(b);
-    }
-  }
   return out;
 }
 
@@ -718,8 +738,12 @@ function appsBlock(udid, d, payload) {
   }
   if (!payload) {
     loadApps(udid);
-    out.push(el("p", { className: "hint spinner", textContent:
+    out.push(el("p", { className: "hint", textContent:
       "Reading the app list and asking each App Store about it. The first scan takes about half a minute." }));
+    // Shaped like the rows it becomes — icon, two lines, a status chip — for the same reason the
+    // Devices skeleton is: a placeholder of the wrong size only moves the jolt from "content
+    // appears" to "content resizes". Half a minute is a long time to look at one line of text.
+    out.push(appsSkeleton());
     return out;
   }
   if (payload.error) {
@@ -769,6 +793,26 @@ function appsBlock(udid, d, payload) {
   // Deferred until the nodes are in the document, since drawAppList looks them up by id.
   queueMicrotask(() => drawAppList(udid, apps, $("#app-list"), $("#app-count")));
   return out;
+}
+
+// appsSkeleton is the shimmer that stands in for the app list while the scan runs.
+//
+// aria-hidden, because a screen reader announcing six rows of nothing is worse than silence — the
+// sentence above it already says what is happening.
+function appsSkeleton() {
+  const row = (title, sub) => el("div", { className: "row" }, [
+    el("div", { className: "sk sk-icon" }),
+    el("div", { className: "row-main" }, [
+      el("div", { className: "sk sk-line", style: `width:${title}%` }),
+      el("div", { className: "sk sk-line sk-sub", style: `width:${sub}%` }),
+    ]),
+    el("div", { className: "sk sk-chip" }),
+  ]);
+  // Uneven widths, because a column of identical bars reads as a graphic rather than as a list
+  // that is filling in.
+  return el("div", { className: "list sk-list", "aria-hidden": "true" }, [
+    row(58, 41), row(44, 33), row(63, 47), row(37, 29), row(52, 38), row(47, 31),
+  ]);
 }
 
 function matchesFilter(a, needle) {
