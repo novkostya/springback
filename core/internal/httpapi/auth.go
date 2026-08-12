@@ -22,6 +22,7 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 		s.Auth.State(auth.TokenFrom(r)),
 		auth.SecureOrigin(r),
 		auth.IsLoopback(r.Host),
+		s.DemoPassword,
 	))
 }
 
@@ -80,8 +81,9 @@ func (s *Server) issueSession(w http.ResponseWriter, r *http.Request, password s
 		return
 	}
 	http.SetCookie(w, auth.CookieForToken(r, token, sessionMaxAge))
+	// The password is not repeated to somebody who has just used it successfully.
 	writeJSONRaw(w, http.StatusOK, auth.MarshalState(
-		auth.StateAuthenticated, auth.SecureOrigin(r), auth.IsLoopback(r.Host)))
+		auth.StateAuthenticated, auth.SecureOrigin(r), auth.IsLoopback(r.Host), ""))
 }
 
 func (s *Server) authLogout(w http.ResponseWriter, r *http.Request) {

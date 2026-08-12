@@ -57,6 +57,13 @@ type Server struct {
 	// full of plausible device names that is not talking to any device would otherwise be
 	// indistinguishable from the real thing.
 	Fake bool
+	// DemoPassword is set only on the public demo, which is a fake instance PLUS a password
+	// anybody may use. The login screen has to SAY what that password is: it is the one screen
+	// a visitor meets before any banner, and a demo nobody can log in to is a locked door.
+	//
+	// One field rather than a flag beside a string, so "this is a demo" and "this is its
+	// password" cannot disagree with each other.
+	DemoPassword string
 
 	// --- live updates. Built by setupLive, which Handler calls; see live.go. ---
 

@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/novkostya/springback/core/internal/auth"
+	"github.com/novkostya/springback/core/internal/demo"
 	"github.com/novkostya/springback/core/internal/devices"
 	"github.com/novkostya/springback/core/internal/httpapi"
 	"github.com/novkostya/springback/core/internal/jobs"
@@ -44,6 +45,7 @@ func main() {
 	muxAddr := fs.String("mux", os.Getenv("USBMUXD_SOCKET_ADDRESS"), "muxer address, e.g. 127.0.0.1:27015 for netmuxd; empty uses libimobiledevice's default unix socket")
 	cacheTTL := fs.Duration("cache-ttl", 7*24*time.Hour, "how long a store verdict stays cached")
 	fake := fs.Bool("fake", os.Getenv("SPRINGBACK_FAKE") != "", "use the fake tool layer (no hardware, no Apple)")
+	publicDemo := fs.Bool("public-demo", os.Getenv("SPRINGBACK_PUBLIC_DEMO") != "", "run as a throwaway public demo: fake tools, a published password, fixture data")
 	debug := fs.Bool("debug", false, "verbose logging")
 	if err := fs.Parse(args); err != nil {
 		os.Exit(2)
@@ -62,6 +64,15 @@ func main() {
 		level = slog.LevelDebug
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+
+	// THE DEMO FORCES THE FAKE, and does not merely default to it. This mode publishes its own
+	// password, so everything reachable behind that password is reachable by anyone at all —
+	// which is fine against fixtures and catastrophic against the real tool layer, where the
+	// same screens sign in to Apple and install software onto whatever is plugged in. A missing
+	// `-fake` in a deploy file must not be the difference.
+	if *publicDemo {
+		*fake = true
+	}
 
 	var t tools.Tools
 	if *fake {
@@ -105,6 +116,21 @@ func main() {
 	resolver := storefront.NewResolver(t, *cacheTTL, store.NewStatusCache(*libraryDir))
 	jobRegistry := jobs.NewRegistry()
 
+	// Seeded BEFORE the listener opens, so the first request cannot arrive at a half-built demo
+	// — an empty library for one visitor and a full one for the next reads as a broken instance
+	// rather than a slow start.
+	if *publicDemo {
+		if err := demo.Seed(context.Background(), log, t, authSvc, accounts, library); err != nil {
+			// Fatal on purpose. A demo that came up without its password set is a public
+			// login form that nobody can pass, and one without fixtures is three empty
+			// screens; both are worse than a deploy that visibly failed.
+			log.Error("cannot seed the demo", "err", err)
+			os.Exit(1)
+		}
+		log.Warn("PUBLIC DEMO: fake tools, and the password is published on the login screen",
+			"password", demo.Password)
+	}
+
 	srv := &httpapi.Server{
 		Tools:       t,
 		Auth:        authSvc,
@@ -117,6 +143,9 @@ func main() {
 		Jobs:        jobRegistry,
 		Log:         log,
 		Fake:        *fake,
+	}
+	if *publicDemo {
+		srv.DemoPassword = demo.Password
 	}
 
 	httpSrv := &http.Server{

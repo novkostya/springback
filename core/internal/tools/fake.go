@@ -265,23 +265,36 @@ func (f *Fake) DeviceIcons(ctx context.Context, udid string, bundleIDs []string)
 		if !safeBundleID(b) || i%4 == 3 {
 			continue
 		}
-		// A colour derived from the bundle id, so the same app is the same colour on every
-		// render and a mis-keyed cache is visible rather than merely wrong.
-		h := fnv.New32a()
-		_, _ = h.Write([]byte(b))
-		sum := h.Sum32()
-		img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
-		draw.Draw(img, img.Bounds(), &image.Uniform{color.NRGBA{
-			R: byte(sum), G: byte(sum >> 8), B: byte(sum >> 16), A: 0xff,
-		}}, image.Point{}, draw.Src)
-
-		var buf bytes.Buffer
-		if err := png.Encode(&buf, img); err != nil {
+		png, err := fakeIcon(b)
+		if err != nil {
 			return nil, err
 		}
-		icons[b] = buf.Bytes()
+		icons[b] = png
 	}
 	return icons, nil
+}
+
+// fakeIcon draws one app's tile: a flat square whose colour is DERIVED FROM THE BUNDLE ID, so the
+// same app is the same colour on every render and a mis-keyed cache is visible rather than merely
+// wrong.
+//
+// Shared with the archive builder in Download, and that sharing is the point: an app's icon on the
+// device and its icon in the library are then the same picture, which is what the precedence rules
+// between those two sources are judged against.
+func fakeIcon(bundleID string) ([]byte, error) {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(bundleID))
+	sum := h.Sum32()
+	img := image.NewNRGBA(image.Rect(0, 0, 64, 64))
+	draw.Draw(img, img.Bounds(), &image.Uniform{color.NRGBA{
+		R: byte(sum), G: byte(sum >> 8), B: byte(sum >> 16), A: 0xff,
+	}}, image.Point{}, draw.Src)
+
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
 }
 
 func (f *Fake) InstallApp(ctx context.Context, udid, ipaPath string, onProgress func(InstallProgress)) error {
@@ -468,6 +481,24 @@ func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int6
 			return DownloadResult{}, err
 		}
 	}
+
+	// AN ICON, AT THE BUNDLE ROOT WHERE A REAL ONE LIVES. Without it the library screen is a
+	// column of lettered tiles, and — worse for a fixture layer — ipa.Icon is never once run
+	// outside its own unit tests: every archive this fake produced was an archive with no icon
+	// in it, which is precisely the case the extractor is least interesting on.
+	//
+	// The same picture the device draws for this bundle, so the library and the device agree.
+	icon, err := fakeIcon(bundle)
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	iw, err := zw.Create("Payload/" + name + ".app/AppIcon60x60@2x.png")
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	if _, err := iw.Write(icon); err != nil {
+		return DownloadResult{}, err
+	}
 	// Some bulk, so the library's size column shows something and a progress-free 500 MB
 	// download is at least suggested. Kept small: this runs on a dev box.
 	w, err := zw.Create("Payload/" + name + ".app/" + name)
@@ -487,6 +518,26 @@ func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int6
 }
 
 func (f *Fake) bundleForIDLocked(appID int64) (bundle, name string) {
+	// THE INSTALLED APPS ARE THE BEST ANSWER, AND THEY ARE ASKED FIRST. They carry the numeric
+	// id, the bundle id and the app's real name together — which the storefront map does not,
+	// and which the DELISTED fixtures are missing from entirely, because being in no storefront
+	// is what they are for.
+	//
+	// Asking the store first is what made archiving Boomerang — the delisted app this whole tool
+	// exists for — produce a library item called "App6744684419" with the bundle id
+	// `com.example.app6744684419`. It matched nothing installed anywhere, so the demo could walk
+	// every step of its own headline flow except the one where the archive comes back.
+	for _, apps := range f.apps {
+		for _, a := range apps {
+			if a.AppID == appID && a.AppID != 0 {
+				n := a.StoreName
+				if n == "" {
+					n = a.Name
+				}
+				return a.BundleID, n
+			}
+		}
+	}
 	for b, fronts := range f.store {
 		for _, id := range fronts {
 			if id == appID {

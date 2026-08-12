@@ -238,6 +238,8 @@ machine with no iPhone near it. Version pins live in [`versions.env`](versions.e
 - [`docs/purchase-history.md`](docs/purchase-history.md) — an unfinished investigation into
   listing apps you own but have *not* installed.
 - [`docs/ios-spa-notes.md`](docs/ios-spa-notes.md) — notes on making a web app feel right on iOS.
+- [`deploy/demo.md`](deploy/demo.md) — the throwaway public demo: what it is seeded with, and what
+  makes it safe to point a stranger at.
 
 ---
 

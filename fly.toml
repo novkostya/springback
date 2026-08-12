@@ -1,0 +1,70 @@
+# The PUBLIC DEMO instance. `springback serve --public-demo` on fly.io.
+#
+# This is NOT how anybody runs springback for real — that is deploy/compose.yml and
+# deploy/compose.netmuxd.yml, both of which need a device and a muxer this machine has neither of.
+# It hosts the throwaway demo and nothing else. deploy/demo.md is the prose; this is the artifact.
+#
+# It lives at the repository ROOT rather than under deploy/, because `[build] dockerfile` is
+# resolved against the build context and fly sets that to the project root. Root is also where
+# `make image` builds from (`-f deploy/Dockerfile .`), so the two agree by construction.
+
+app = "springback-demo"
+primary_region = "fra"
+
+[build]
+  dockerfile = "deploy/Dockerfile"
+  # HYPHEN, not underscore, and flyctl IGNORES an unknown key in silence — `build_target` would
+  # build the last stage without a word of complaint. `runtime` is the last stage today, so this
+  # is insurance against one being appended later rather than a live requirement.
+  build-target = "runtime"
+
+[env]
+  # The demo writes its library and accounts to the CONTAINER FILESYSTEM, not to a volume, and
+  # that is the whole reset mechanism: fly resets the rootfs on a cold start, so every visitor
+  # after a sleep gets the fixtures back exactly as seeded. A volume here would preserve whatever
+  # the last visitor did to it, forever, with nothing in springback able to notice.
+  #
+  # /library and /accounts are the image's defaults and are repeated only for the reader; the
+  # paths that matter are these two, because they are what must NOT be mounted.
+  SPRINGBACK_LIBRARY = "/library"
+  SPRINGBACK_ACCOUNTS = "/accounts"
+  SPRINGBACK_LISTEN = ":8971"
+
+# `[processes]` sets CMD; it does NOT replace the image's ENTRYPOINT. So this becomes
+# `springback serve --public-demo`.
+#
+# --public-demo, and never a bare `serve`. The flag forces the fake tool layer, so every screen on
+# this instance is fixtures: the alternative is a public login form, whose password is printed on
+# it, in front of the real ipatool and a real installer.
+[processes]
+  app = "serve --public-demo"
+
+[http_service]
+  internal_port = 8971
+  force_https = true
+  # Binds the service to the `app` process group above. Required whenever ANY [processes] block
+  # exists, whatever the group is called — flyctl refuses the config without it.
+  processes = ["app"]
+
+  # "stop", NEVER "suspend" — the load-bearing line in this file.
+  #
+  # The demo's reset rests entirely on the seed running at PROCESS START against a fresh rootfs.
+  # "suspend" restores a Firecracker memory snapshot "without rebooting the OS or restarting your
+  # app", so the seed never runs and whatever the last visitor left stays. "stop" terminates the
+  # VM, which is the cold boot the reset depends on.
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 0
+
+  # NO [[http_service.checks]] BLOCK, on purpose. A periodic check is traffic, and this deployment
+  # is asleep almost all the time by design; whether fly's service checks defeat autostop is not
+  # documented either way, so a check added for tidiness might hold the machine awake around the
+  # clock and turn a near-free demo into a billed one. The cost of leaving it out is that
+  # `fly deploy` does not wait for the app to answer before reporting success.
+
+[[vm]]
+  size = "shared-cpu-1x"
+  # 256mb is the floor for a shared CPU. The demo serves fixtures, starts no muxer, and never
+  # shells out to ipatool — but it does hold the whole embedded UI and a few hundred icons. If it
+  # OOMs the next step is 512mb; there is nothing between them.
+  memory = "256mb"

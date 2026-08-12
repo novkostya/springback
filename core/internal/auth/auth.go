@@ -464,12 +464,20 @@ func writeFileAtomic(dest string, data []byte, mode os.FileMode) error {
 }
 
 // MarshalState is a tiny helper so the handler stays about HTTP.
-func MarshalState(state string, secure, loopback bool) []byte {
-	b, _ := json.Marshal(map[string]any{
+//
+// demoPassword is the PUBLISHED password of a public demo, and empty everywhere else. It is
+// omitted rather than sent empty: a client can then treat its presence as the whole question, and
+// no ordinary install ever puts a password-shaped key on an unauthenticated endpoint.
+func MarshalState(state string, secure, loopback bool, demoPassword string) []byte {
+	m := map[string]any{
 		"state":    state,
 		"username": Username,
 		"secure":   secure,
 		"loopback": loopback,
-	})
+	}
+	if demoPassword != "" {
+		m["demo_password"] = demoPassword
+	}
+	b, _ := json.Marshal(m)
 	return b
 }

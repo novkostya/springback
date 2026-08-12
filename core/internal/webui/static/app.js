@@ -66,7 +66,7 @@ let booted = false;
 // first person to call regate a little earlier than it is called today.
 let leaving = false;
 
-function showGate(state) {
+function showGate(state, demoPassword) {
   const setup = state === "needs_setup";
   // NOTHING KEEPS FEEDING A GATED PAGE. The server closes the socket within a ping of the
   // session dying, but the gate can also go up for reasons the server has not noticed yet, and
@@ -74,9 +74,14 @@ function showGate(state) {
   dropLive();
   document.body.classList.add("gated");
   $("#gate").hidden = false;
-  $("#gate-intro").textContent = setup
-    ? "Choose a password. It is the only thing standing between this box and every Apple ID signed in to it, so make it a real one."
-    : "";
+  // THE PUBLIC DEMO PRINTS ITS OWN PASSWORD, because nobody can guess it and there is nothing
+  // behind it to protect: fixtures on a disk that is wiped between boots. The server only sends
+  // this on an instance started with --public-demo, so an ordinary install cannot land here.
+  $("#gate-intro").textContent = demoPassword
+    ? `This is the public demo. The password is ${demoPassword} — nothing here talks to a real device or to Apple, and it resets itself.`
+    : setup
+      ? "Choose a password. It is the only thing standing between this box and every Apple ID signed in to it, so make it a real one."
+      : "";
   $("#gate-confirm-wrap").hidden = !setup;
   $("#gate-submit").textContent = setup ? "Set password" : "Sign in";
   // The password manager needs to know which of the two this is, or it offers to fill a
@@ -145,7 +150,7 @@ async function regate() {
       location.reload();
       return;
     }
-    showGate(st.state);
+    showGate(st.state, st.demo_password);
   } catch {
     // The server is unreachable, so its state is unknowable — and reloading would replace the
     // app with the browser's own error page. Sign-in is the safer of the two to offer: it
@@ -2251,7 +2256,7 @@ async function boot() {
     hideGate();
     await boot();
   } else {
-    showGate(status.state);
+    showGate(status.state, status.demo_password);
   }
 })();
 
