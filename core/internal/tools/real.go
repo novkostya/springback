@@ -617,7 +617,73 @@ func (r *Real) Download(ctx context.Context, home, passphrase string, appID int6
 		}
 	}()
 
+	// WATCH THE FILES, BECAUSE ipatool GOES QUIET FOR THE LAST STEP.
+	//
+	// Its download command is, from the source of the pinned version:
+	//
+	//	tmpPath := destination + ".tmp"
+	//	downloadFile(item.URL, tmpPath, input.Progress)   // the progress bar lives here
+	//	applyPatches(item, account, tmpPath, destination) // no progress at all
+	//
+	// applyPatches rewrites the WHOLE archive — every entry copied into a new zip, plus the
+	// iTunesMetadata that makes the .ipa installable. On a 434 MB app that is most of a
+	// gigabyte of I/O and about ten seconds, during which the bar sits frozen at whatever its
+	// last frame said. Reported twice as "stuck at 99%", which is precisely what it looks like.
+	//
+	// There is nothing printed to parse, but the two files say everything: while the .tmp
+	// exists and the destination is growing, the rewrite is running and its progress is the
+	// ratio between them.
+	stopWatch := make(chan struct{})
+	watchDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		tmpPath := outPath + ".tmp"
+		// THE DESTINATION MAY ALREADY EXIST, and that is the case this has to survive: a
+		// re-download to pick up a new version writes over an archive that is already there.
+		// Comparing sizes naively would divide yesterday's full 434 MB by a .tmp that has
+		// just started growing and announce "Signing 100%" for the whole transfer.
+		//
+		// So the rewrite is recognised by the destination CHANGING from how it was found,
+		// rather than by it merely existing. Against a remembered stat, not against a
+		// wall-clock instant: mtime granularity on a real filesystem is coarser than
+		// time.Now(), so "modified after this moment" is false for a file written in the
+		// same second — which a fast download would hit, and which cost this a test.
+		before, beforeErr := os.Stat(outPath)
+		rewriteBegun := func(dst os.FileInfo) bool {
+			if beforeErr != nil {
+				return true // it did not exist; its appearance IS the rewrite starting
+			}
+			return dst.Size() != before.Size() || !dst.ModTime().Equal(before.ModTime())
+		}
+		lastPct := -1
+		for {
+			select {
+			case <-stopWatch:
+				return
+			case <-time.After(400 * time.Millisecond):
+			}
+			tmp, err := os.Stat(tmpPath)
+			if err != nil || tmp.Size() == 0 {
+				continue // not downloading yet, or finished and already cleaned up
+			}
+			dst, err := os.Stat(outPath)
+			if err != nil || !rewriteBegun(dst) {
+				continue // still transferring; the destination is untouched
+			}
+			pct := int(dst.Size() * 100 / tmp.Size())
+			if pct > 100 {
+				pct = 100
+			}
+			if pct != lastPct {
+				lastPct = pct
+				onProgress(DownloadProgress{Percent: pct, Stage: "signing"})
+			}
+		}
+	}()
+
 	waitErr := cmd.Wait()
+	close(stopWatch)
+	<-watchDone
 	_ = ptmx.Close()
 	<-done
 

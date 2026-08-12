@@ -371,7 +371,7 @@ func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
 				case <-t.C:
 					quiet := time.Since(time.UnixMilli(lastFrame.Load()))
 					if quiet > 4*time.Second && peak.Load() >= 95 {
-						h.Progress(-1, "decrypting and repacking — no progress is reported for this part", "")
+						h.Progress(-1, "", "finishing — this part of the job reports no progress")
 					}
 				}
 			}
@@ -380,6 +380,13 @@ func (s *Server) addLibrary(w http.ResponseWriter, r *http.Request) {
 		res, err := s.Tools.Download(ctx, acc.Home(s.Accounts.Root), acc.KeychainPP, req.AppID, out,
 			func(p tools.DownloadProgress) {
 				lastFrame.Store(time.Now().UnixMilli())
+				// The signing pass has its own 0-100, so it must not feed the
+				// stall detector's peak — otherwise the transfer looks like it
+				// went backwards from 99% to 3%.
+				if p.Stage == "signing" {
+					h.Progress(p.Percent, "signing", "adding the App Store metadata that makes it installable")
+					return
+				}
 				if int64(p.Percent) > peak.Load() {
 					peak.Store(int64(p.Percent))
 				}

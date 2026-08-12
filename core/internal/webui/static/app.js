@@ -243,7 +243,11 @@ function jobRow(j) {
   const bar = el("div", { className: "bar" }, [
     el("div", { className: "bar-fill", style: `width:${pct == null ? 0 : pct}%` }),
   ]);
+  // THE STAGE NAMES THE VERB. A download ends with ipatool rewriting the whole archive to add
+  // the App Store metadata — tens of seconds on a large app, with its own progress — and calling
+  // that "Downloading" while the byte counter has stopped moving is what made it look hung.
   const what = j.kind === "install" ? `Installing ${j.label}`
+    : j.stage === "signing" ? `Signing ${j.label}`
     : `Downloading ${j.label}`;
   const where = j.target ? ` → ${j.target}` : "";
   return el("div", { className: "job" }, [

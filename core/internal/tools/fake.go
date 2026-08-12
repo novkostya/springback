@@ -399,6 +399,19 @@ func (f *Fake) Download(ctx context.Context, home, passphrase string, appID int6
 				Detail:  fmt.Sprintf("%d/%d MB, 35 MB/s", totalMB*pct/100, totalMB),
 			})
 		}
+
+		// AND THEN THE SIGNING PASS, because the real one is where the confusing part is.
+		// ipatool rewrites the whole archive after the transfer to add the App Store
+		// metadata, reporting nothing — which for years looked like a download stuck at 99%.
+		// A fake that stops at 100% never renders the screen that explains it.
+		for pct := 0; pct <= 100; pct += 12 {
+			select {
+			case <-ctx.Done():
+				return DownloadResult{}, ctx.Err()
+			case <-time.After(150 * time.Millisecond):
+			}
+			onProgress(DownloadProgress{Percent: pct, Stage: "signing"})
+		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(outPath), 0o755); err != nil {

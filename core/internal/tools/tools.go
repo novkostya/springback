@@ -133,6 +133,9 @@ type InstallProgress struct {
 type DownloadProgress struct {
 	Percent int
 	Detail  string
+	// Stage names what is happening when it is not the transfer itself. Empty during the
+	// download; "signing" while ipatool rewrites the archive afterwards.
+	Stage string
 }
 
 // The failure modes of SPEC §7, as values. They are classified here, at the seam, because the
