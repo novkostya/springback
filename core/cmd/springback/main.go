@@ -135,7 +135,7 @@ func main() {
 	// — an empty library for one visitor and a full one for the next reads as a broken instance
 	// rather than a slow start.
 	if *publicDemo {
-		if err := demo.Seed(context.Background(), log, t, authSvc, accounts, library); err != nil {
+		if err := demo.Seed(context.Background(), log, t, authSvc, accounts, library, appCache); err != nil {
 			// Fatal on purpose. A demo that came up without its password set is a public
 			// login form that nobody can pass, and one without fixtures is three empty
 			// screens; both are worse than a deploy that visibly failed.

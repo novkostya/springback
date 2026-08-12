@@ -87,6 +87,34 @@ const Password = "springback-demo"
 // a plausible-looking one at a real domain would eventually reach a real person's inbox.
 const Account = "demo@example.com"
 
+// goneDevice is a device the demo REMEMBERS but does not have.
+//
+// The Apps screen's whole argument is that springback can answer "do I still own this" for hardware
+// that is not in the room — the old iPad in a drawer, the phone that was traded in — and a demo
+// where every device is present cannot show it. So one is seeded as remembered-only: it appears in
+// the list with its apps and a "last seen" rather than as something you can act on now.
+//
+// It is not in the fake's device fixtures on purpose. That is exactly the state being demonstrated:
+// springback knows what was on it, and cannot reach it.
+const goneDevice = "00008030-001C2D3E4F506152"
+const goneDeviceName = "iPad Air (traded in)"
+
+// goneApps is what that iPad had. Written in the shape devices.App marshals to — the demo package
+// cannot import devices without a cycle, and the cache stores raw JSON precisely so it does not
+// have to.
+// AT LEAST ONE APP THE LIVE FIXTURES DO NOT HAVE, or the demonstration disappears. An app that is
+// also on the iPhone in the room shows the reachable sighting first — correctly, since that is the
+// one you can act on — so a remembered device whose apps all overlap contributes nothing visible.
+// iTunes U is the one that carries it: real, genuinely withdrawn by Apple, and on nothing else here.
+const goneApps = `[
+  {"bundle_id":"com.apple.itunesu","name":"iTunes U","store_name":"iTunes U",
+   "version":"3.7.2","app_id":490217893,"store_status":"delisted","in_library":false},
+  {"bundle_id":"com.burbn.boomerang","name":"Boomerang","store_name":"Boomerang from Instagram",
+   "version":"1.6","app_id":6744684419,"store_status":"delisted","in_library":false},
+  {"bundle_id":"com.google.ios.youtube","name":"YouTube","store_name":"YouTube",
+   "version":"20.9","app_id":544007664,"store_status":"available","in_library":false}
+]`
+
 // archived is what the library starts with — and it is DELISTED ON PURPOSE.
 //
 // Boomerang is the fixture that carries springback's whole argument: Apple pulled it, it is still
@@ -98,7 +126,7 @@ var archived = []int64{6744684419}
 // Seed makes the box usable by a stranger. It is idempotent in the only sense that matters — a box
 // that already has a password is left alone — because the state it writes lives on a disk that is
 // wiped between boots anyway.
-func Seed(ctx context.Context, log *slog.Logger, t tools.Tools, a *auth.Service, accounts *store.Accounts, library *store.Library) error {
+func Seed(ctx context.Context, log *slog.Logger, t tools.Tools, a *auth.Service, accounts *store.Accounts, library *store.Library, seen *store.AppCache) error {
 	// REFUSE THE REAL TOOLS. A demo seeds an Apple ID and downloads an app, which against the
 	// real layer means signing in to Apple with a made-up password and pulling an .ipa. The
 	// caller already forces the fake; this is the check that survives someone changing that.
@@ -160,6 +188,13 @@ func Seed(ctx context.Context, log *slog.Logger, t tools.Tools, a *auth.Service,
 			return fmt.Errorf("demo record %d: %w", id, err)
 		}
 		log.Info("demo library seeded", "app", item.Name, "bundle", item.BundleID)
+	}
+
+	if seen != nil {
+		if err := seen.Put(goneDevice, goneDeviceName, []byte(goneApps)); err != nil {
+			return fmt.Errorf("demo remembered device: %w", err)
+		}
+		log.Info("demo remembers a device it does not have", "device", goneDeviceName)
 	}
 	return nil
 }

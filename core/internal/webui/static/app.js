@@ -1746,7 +1746,11 @@ function ownedRow(a) {
          : appIcon(a.library_id, a.name, "sm"),
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: a.name }),
-      el("div", { className: "row-sub", textContent: `${a.bundle_id} · ${where}` }),
+      // WHERE FIRST, BUNDLE ID SECOND, because this line truncates on a phone and the end is
+      // what gets eaten. "com.burbn.boomerang · on …" spent the whole line on the id and cut the
+      // one fact this screen adds; this way a narrow row loses the id, which is recoverable by
+      // opening the app, rather than losing where the app actually is.
+      el("div", { className: "row-sub", textContent: `${where} · ${a.bundle_id}` }),
     ]),
     el("div", { className: "row-right" }, [
       a.store_status ? el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }) : null,

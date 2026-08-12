@@ -24,7 +24,7 @@ func seeded(t *testing.T) (string, *auth.Service, *store.Accounts, *store.Librar
 	accounts := store.NewAccounts(dir)
 	library := store.NewLibrary(dir + "/library")
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
-	if err := Seed(context.Background(), log, tools.NewFake(), a, accounts, library); err != nil {
+	if err := Seed(context.Background(), log, tools.NewFake(), a, accounts, library, store.NewAppCache(dir)); err != nil {
 		t.Fatalf("Seed: %v", err)
 	}
 	return dir, a, accounts, library
@@ -92,6 +92,33 @@ func TestSeedStocksTheScreens(t *testing.T) {
 	}
 }
 
+// TestSeedRemembersADeviceItDoesNotHave: the Apps screen's argument is that springback can answer
+// "do I still own this" for hardware that is not in the room, and a demo where every device is
+// present cannot show it. This one is remembered-only, so it appears with a "last seen" rather
+// than as something a visitor can act on.
+func TestSeedRemembersADeviceItDoesNotHave(t *testing.T) {
+	dir, _, _, _ := seeded(t)
+
+	all, err := store.NewAppCache(dir).All()
+	if err != nil || len(all) != 1 {
+		t.Fatalf("remembered devices = %d (%v), want 1", len(all), err)
+	}
+	if all[0].DeviceName != goneDeviceName {
+		t.Errorf("device = %q, want %q", all[0].DeviceName, goneDeviceName)
+	}
+	// It must NOT be one of the fake's live devices, or it would be reachable and the screen
+	// would be demonstrating the ordinary case instead of the interesting one.
+	udids, err := tools.NewFake().ListDeviceUDIDs(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, u := range udids {
+		if u == goneDevice {
+			t.Errorf("the remembered device %s is also a live fixture", goneDevice)
+		}
+	}
+}
+
 // TestSeedIsIdempotent: a restart must not throw an error or a second copy of anything, because
 // the machine is stopped and started by the platform rather than by anyone watching.
 func TestSeedIsIdempotent(t *testing.T) {
@@ -105,7 +132,7 @@ func TestSeedIsIdempotent(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	for i := range 2 {
-		if err := Seed(context.Background(), log, tools.NewFake(), a, accounts, library); err != nil {
+		if err := Seed(context.Background(), log, tools.NewFake(), a, accounts, library, store.NewAppCache(dir)); err != nil {
 			t.Fatalf("Seed run %d: %v", i+1, err)
 		}
 	}
@@ -174,7 +201,7 @@ func TestSeedRefusesTheRealTools(t *testing.T) {
 	}
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	err = Seed(context.Background(), log, tools.NewReal("", dir), a,
-		store.NewAccounts(dir), store.NewLibrary(dir+"/library"))
+		store.NewAccounts(dir), store.NewLibrary(dir+"/library"), store.NewAppCache(dir))
 	if err == nil {
 		t.Fatal("seeded a demo against the REAL tool layer")
 	}
