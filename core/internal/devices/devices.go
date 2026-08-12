@@ -4,6 +4,7 @@ package devices
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 	"sync"
 
@@ -16,7 +17,10 @@ import (
 type Service struct {
 	// Cache remembers what a reachable device said, so an offline one still has a name.
 	// Optional: nil simply means an offline device shows its udid, as it used to.
-	Cache    *store.DeviceCache
+	Cache *store.DeviceCache
+	// Seen remembers each device's app list, so "what do I own" survives the device leaving
+	// the room. Optional: nil disables the Apps screen and changes nothing else.
+	Seen     *store.AppCache
 	Tools    tools.Tools
 	Resolver *storefront.Resolver
 	Library  *store.Library
@@ -327,6 +331,16 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 		}
 		return out.Apps[i].Name < out.Apps[j].Name
 	})
+
+	// REMEMBERED HERE, because this is the only place a device's app list is known to be
+	// complete and judged. Writing it is best-effort on purpose: a cache that could not be
+	// written must not fail the request somebody actually made, and the next successful scan
+	// replaces it anyway.
+	if s.Seen != nil {
+		if b, err := json.Marshal(out.Apps); err == nil {
+			_ = s.Seen.Put(dev.UDID, dev.Name, b)
+		}
+	}
 	return out, nil
 }
 

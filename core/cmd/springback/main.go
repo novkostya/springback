@@ -125,6 +125,9 @@ func main() {
 	storeIcons := store.NewStoreIcons(*libraryDir, nil)
 	// Last-known device facts, so a phone that is elsewhere still has a name on screen.
 	deviceCache := store.NewDeviceCache(*libraryDir)
+	// And its last-known app list, so a phone that is elsewhere still counts as something you
+	// own. Beside the icons and the facts, under the library root for the same reason.
+	appCache := store.NewAppCache(*libraryDir)
 	resolver := storefront.NewResolver(t, *cacheTTL, store.NewStatusCache(*libraryDir))
 	jobRegistry := jobs.NewRegistry()
 
@@ -146,7 +149,7 @@ func main() {
 	srv := &httpapi.Server{
 		Tools:       t,
 		Auth:        authSvc,
-		Devices:     &devices.Service{Tools: t, Resolver: resolver, Library: library, Cache: deviceCache},
+		Devices:     &devices.Service{Tools: t, Resolver: resolver, Library: library, Cache: deviceCache, Seen: appCache},
 		Library:     library,
 		DeviceIcons: deviceIcons,
 		StoreIcons:  storeIcons,

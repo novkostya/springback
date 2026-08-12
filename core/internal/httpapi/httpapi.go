@@ -103,6 +103,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/devices/{udid}/install", s.install)
 	mux.HandleFunc("GET /api/devices/{udid}/icon.png", s.deviceIcon)
 
+	mux.HandleFunc("GET /api/apps", s.ownedApps)
 	mux.HandleFunc("GET /api/library", s.listLibrary)
 	mux.HandleFunc("POST /api/library", s.addLibrary)
 	mux.HandleFunc("DELETE /api/library/{id}", s.deleteLibrary)

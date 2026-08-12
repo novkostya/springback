@@ -258,6 +258,24 @@ const fmtSize = (n) => {
   return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${Math.round(mb)} MB`;
 };
 const fmtDate = (s) => (s ? new Date(s).toLocaleString() : "—");
+
+// ago is a coarse "how long since", for evidence rather than for logs.
+//
+// COARSE ON PURPOSE. This says how old a remembered app list is, and the honest resolution for
+// that is "yesterday", not "17:42:03". A precise timestamp would invite the reader to trust it as
+// a fact about the device rather than about when springback last managed to ask.
+function ago(iso) {
+  if (!iso) return "never";
+  const secs = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!isFinite(secs) || secs < 0) return "just now";
+  const day = 86400;
+  if (secs < 90) return "just now";
+  if (secs < 3600) return `${Math.round(secs / 60)} min ago`;
+  if (secs < day) return `${Math.round(secs / 3600)}h ago`;
+  if (secs < 2 * day) return "yesterday";
+  if (secs < 30 * day) return `${Math.round(secs / day)} days ago`;
+  return fmtDate(iso).split(",")[0];
+}
 const statusLabel = (s) => (s === "not_listed" ? "not listed" : s.toUpperCase());
 
 // cmpVersions compares two App Store version strings: >0 if a is newer.
@@ -1071,9 +1089,14 @@ function renderAppDetail() {
   // NAME WHERE IT GOES, WHICH FOR AN APP OPENED FROM A PHONE IS THE PHONE. It said "Devices"
   // because that is the tab it belongs to, but back does not go to the tab — it goes to the
   // device's own page, one step up. Reported.
-  const fromDevice = detail.device && !(detail.item && !detail.app);
+  // OPENED FROM APPS, BACK GOES TO APPS. That screen lists an app that may be on a device which
+  // is not here, so naming the device would send the reader to a page that can tell them nothing
+  // — and they never came through it in the first place.
+  const fromApps = detail.from === "apps";
+  const fromDevice = !fromApps && detail.device && !(detail.item && !detail.app);
   const backLabel = fromDevice
     ? deviceLabel(devices.find((x) => x.udid === detail.device.udid) || detail.device)
+    : fromApps ? "Apps"
     : parentTab() === "library" ? "Library" : "Devices";
   const back = el("button", { className: "detail-back", type: "button", title: backLabel }, [`‹ ${backLabel}`]);
   back.onclick = () => {
@@ -1083,7 +1106,7 @@ function renderAppDetail() {
     // second surprise on top of the first.
     if (history.length > 1) history.back();
     else if (fromDevice) navigate(`/device/${encodeURIComponent(detail.device.udid)}`);
-    else navigate(parentTab() === "library" ? "/library" : "/");
+    else navigate(pathForScreen(parentTab()));
   };
 
   const head = el("div", { className: "detail-head" }, [
@@ -1594,6 +1617,170 @@ function deviceIcon(udid, bundleID, version, name, size) {
 }
 
 // ---------------------------------------------------------------------------
+// Apps — everything you own, across every device, whether or not it is here
+// ---------------------------------------------------------------------------
+
+// owned is the last answer from /api/apps; ownedQ is the search text.
+//
+// THE TEXT LIVES HERE RATHER THAN IN THE DOM, like the device page's filter and for the same
+// reason: this screen is redrawn by the live socket, and a redraw that read the box would lose
+// whatever was half-typed into it.
+let owned = null;
+let ownedQ = "";
+let ownedTimer;
+
+async function refreshOwned() {
+  const q = ownedQ.trim();
+  try {
+    owned = await api("/api/apps" + (q ? `?q=${encodeURIComponent(q)}` : ""));
+  } catch (e) {
+    owned = { error: e.message, apps: [] };
+  }
+}
+
+// SEARCH IS A SERVER ROUND TRIP, unlike the per-device list which filters what it already holds.
+// This list spans every device ever seen, so the phone would be filtering a payload it did not
+// need — and the phone is usually the slowest thing in the room. Debounced, because a round trip
+// per keystroke over wifi is worse than one 200ms late.
+function renderApps() {
+  const root = $("#screen-apps");
+  const search = el("input", {
+    type: "search", className: "search", id: "owned-search",
+    placeholder: "Search by name or bundle id", value: ownedQ,
+    autocapitalize: "none", autocorrect: "off", spellcheck: false,
+  });
+  search.oninput = () => {
+    ownedQ = search.value;
+    clearTimeout(ownedTimer);
+    ownedTimer = setTimeout(async () => {
+      await refreshOwned();
+      renderApps();
+      // Put the caret back where it was: this redraw replaces the input the user is typing in.
+      const box = $("#owned-search");
+      if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+    }, 200);
+  };
+
+  const blocks = [
+    el("h2", { className: "screen", textContent: "Apps" }),
+    el("p", { className: "screen-hint", textContent:
+      "Every app springback has seen on your devices — including the ones that are not here now." }),
+    el("div", { className: "search-wrap" }, [search]),
+  ];
+
+  if (!owned) {
+    blocks.push(el("p", { className: "empty", textContent: "Reading what this box remembers…" }));
+    root.replaceChildren(...blocks);
+    return;
+  }
+  if (owned.error) {
+    blocks.push(el("div", { className: "error", textContent: owned.error }));
+    root.replaceChildren(...blocks);
+    return;
+  }
+
+  // THE SUMMARY SAYS WHAT THE LIST RESTS ON. This screen is assembled from memory rather than
+  // from hardware, so "12 apps" without "from 2 devices, last seen yesterday" would be a claim
+  // about the world with its evidence hidden.
+  if (owned.devices_seen) {
+    blocks.push(el("p", { className: "hint", textContent:
+      `${owned.total} app${owned.total === 1 ? "" : "s"} from ${owned.devices_seen} ` +
+      `device${owned.devices_seen === 1 ? "" : "s"}` +
+      (owned.delisted ? ` · ${owned.delisted} delisted` : "") +
+      (owned.in_library ? ` · ${owned.in_library} archived here` : "") +
+      (owned.last_seen ? ` · last seen ${ago(owned.last_seen)}` : "") }));
+  }
+
+  const apps = owned.apps || [];
+  if (!apps.length) {
+    // THE EMPTY STATE HAS TO TEACH, because the most likely reader is somebody who came here
+    // looking for the app that vanished. Told "no results", they would conclude springback
+    // cannot help — the exact opposite of the truth.
+    blocks.push(el("p", { className: "empty", textContent: ownedQ
+      ? "Nothing here matches that."
+      : "Nothing remembered yet. Open a device and let it scan once — springback keeps the list "
+        + "afterwards, so the app stays findable when the device is not here." }));
+    if (ownedQ) {
+      blocks.push(el("p", { className: "hint", textContent:
+        "This searches what your devices reported, not the App Store. An app you never installed "
+        + "on a device springback has seen will not be here — and one Apple has pulled is in no "
+        + "store to search either, which is what the numeric id on the Library screen is for." }));
+    }
+    root.replaceChildren(...blocks);
+    return;
+  }
+
+  blocks.push(el("div", { className: "list" }, apps.map(ownedRow)));
+  root.replaceChildren(...blocks);
+}
+
+function ownedRow(a) {
+  const here = (a.devices || []).find((d) => d.here);
+  const seen = (a.devices || [])[0];
+
+  // WHERE IT LIVES, in the sub-line, because that is the fact this screen adds over the device
+  // page: the same app on a phone in your hand and on an iPad in a drawer are different
+  // situations, and only one of them can be acted on right now.
+  let where;
+  if (a.archived_only) where = "archived here · on no device";
+  else if (here) where = `on ${here.device_name || "a device that is here"}`;
+  else if (seen) where = `${seen.device_name || "a device"} · last seen ${ago(seen.seen_at)}`;
+  else where = a.bundle_id;
+
+  // `?from=apps` IS IN THE URL RATHER THAN IN A CLICK HANDLER, and that is a fix rather than a
+  // style choice. The row is an <a>, and the router intercepts link clicks on the DOCUMENT — which
+  // runs before this element's own handler gets to record where the reader came from. Measured: the
+  // detail page rendered with back saying "Devices", and the marker arrived a moment later, correct
+  // and too late to matter.
+  //
+  // In the URL it cannot lose that race, and it survives a reload and a shared link besides.
+  const target = a.in_library && a.library_id ? `/library/${a.library_id}`
+    : seen ? `/device/${encodeURIComponent(seen.udid)}/${encodeURIComponent(a.bundle_id)}?from=apps` : null;
+
+  const row = el(target ? "a" : "div", {
+    className: "row",
+    ...(target ? { href: target } : {}),
+  }, [
+    // The device that has it draws the icon; a library-only app has its archive's artwork.
+    seen ? deviceIcon(seen.udid, a.bundle_id, seen.version, a.name, "sm")
+         : appIcon(a.library_id, a.name, "sm"),
+    el("div", { className: "row-main" }, [
+      el("div", { className: "row-title", textContent: a.name }),
+      el("div", { className: "row-sub", textContent: `${a.bundle_id} · ${where}` }),
+    ]),
+    el("div", { className: "row-right" }, [
+      a.store_status ? el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }) : null,
+      a.in_library ? el("span", { className: "badge library", textContent: "in library" }) : null,
+    ]),
+  ]);
+
+  return row;
+}
+
+// detailFromOwned builds the detail view's data for an app the reader picked on this screen.
+//
+// NEEDED BECAUSE THE DEVICE MAY NOT BE HERE. The detail route normally reads the device's live scan
+// cache, which by definition holds nothing for a phone that is in a drawer — and that phone's apps
+// are the ones this screen exists to surface. Everything below comes from the remembered list, and
+// the Archive button on that page works from the receipt's id without the device.
+function detailFromOwned(udid, bundle) {
+  const a = ((owned && owned.apps) || []).find((x) => x.bundle_id === bundle);
+  if (!a) return null;
+  const seen = (a.devices || []).find((d) => d.udid === udid) || (a.devices || [])[0];
+  const dev = devices.find((d) => d.udid === udid)
+    || { udid, name: (seen && seen.device_name) || "" };
+  return {
+    device: dev,
+    from: "apps",
+    app: {
+      bundle_id: a.bundle_id, name: a.name, store_name: a.name,
+      version: seen && seen.version, store_status: a.store_status,
+      app_id: a.app_id, in_library: a.in_library,
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Library
 // ---------------------------------------------------------------------------
 
@@ -1694,9 +1881,9 @@ function routeFor(url) {
   if ((m = path.match(/^\/library\/(\d+)$/))) return { screen: "app", libraryID: m[1] };
   if ((m = path.match(/^\/device\/([^/]+)$/))) return { screen: "device", udid: decodeURIComponent(m[1]) };
   if ((m = path.match(/^\/device\/([^/]+)\/([^/]+)$/))) {
-    return { screen: "app", udid: decodeURIComponent(m[1]), bundle: decodeURIComponent(m[2]) };
+    return { screen: "app", udid: decodeURIComponent(m[1]), bundle: decodeURIComponent(m[2]), from: url.searchParams.get("from") || "" };
   }
-  if (path === "/library" || path === "/accounts") return { screen: path.slice(1) };
+  if (path === "/apps" || path === "/library" || path === "/accounts") return { screen: path.slice(1) };
   return { screen: "devices" };
 }
 
@@ -1734,6 +1921,11 @@ async function renderRoute(url, { traverse = false } = {}) {
     if (route.libraryID) {
       const item = library.find((i) => String(i.id) === route.libraryID);
       if (item) detail = { item };
+    } else if (route.from === "apps") {
+      // OPENED FROM THE APPS SCREEN, so the remembered list is the source rather than the
+      // device's live scan cache — which holds nothing at all for a device that is not here,
+      // and those are exactly the apps that screen exists to surface.
+      detail = detailFromOwned(route.udid, route.bundle) || detail;
     } else {
       const device = devices.find((d) => d.udid === route.udid);
       const payload = appsCache.get(route.udid);
@@ -1749,6 +1941,20 @@ async function renderRoute(url, { traverse = false } = {}) {
     }
     showScreen("app");
     renderAppDetail();
+    if (!traverse) startAtTop();
+    return;
+  }
+
+  if (route.screen === "apps") {
+    // FETCHED BEFORE THE SCREEN IS SHOWN, on the way in, because this list is not part of the
+    // device poll: it is a read of what the box remembers, and nothing else refreshes it.
+    showScreen("apps");
+    renderApps();
+    if (!traverse || stale.has("apps")) {
+      await refreshOwned();
+      stale.delete("apps");
+      renderApps();
+    }
     if (!traverse) startAtTop();
     return;
   }
@@ -1808,19 +2014,26 @@ function showScreen(screen) {
   for (const b of document.querySelectorAll("nav a")) {
     b.classList.toggle("active", b.dataset.screen === lit);
   }
-  for (const s of ["devices", "library", "accounts", "device", "app"]) {
+  for (const s of ["devices", "apps", "library", "accounts", "device", "app"]) {
     $(`#screen-${s}`).hidden = s !== screen;
   }
 }
 
 // parentTab: a detail screen belongs to the list it was opened from.
+//
+// `from` is set only by the Apps screen, and it is needed because that screen is the one place a
+// detail can be reached WITHOUT its device being the way in. Everywhere else the shape of `detail`
+// says where it came from; from Apps, an app on a device looks identical to one opened from that
+// device's own page, and back would offer to return somewhere the reader has never been.
 function parentTab() {
+  if (detail && detail.from === "apps") return "apps";
   return detail && detail.item && !detail.app ? "library" : "devices";
 }
 
 function renderScreen(screen) {
   stale.delete(screen);
   if (screen === "devices") renderDevices();
+  if (screen === "apps") renderApps();
   if (screen === "library") renderLibrary();
   if (screen === "accounts") refreshAccounts().then(renderAccountsList);
   if (screen === "device") renderDevice();
@@ -1838,7 +2051,7 @@ const stale = new Set();
 // dataChanged: the device list, the jobs or the library moved. Redraw what is on screen now, and
 // remember that everything else is behind.
 function dataChanged() {
-  for (const s of ["devices", "library", "device", "app"]) stale.add(s);
+  for (const s of ["devices", "apps", "library", "device", "app"]) stale.add(s);
   rerenderCurrent();
 }
 
@@ -1896,7 +2109,7 @@ if (window.navigation && typeof window.navigation.addEventListener === "function
     if (url.origin !== location.origin) return;
     ev.preventDefault();
     if (url.pathname === location.pathname) return;
-    history.pushState(null, "", url.pathname);
+    history.pushState(null, "", url.pathname + url.search);
     renderRoute(url);
   });
   window.addEventListener("popstate", () => {

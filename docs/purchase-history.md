@@ -98,10 +98,43 @@ Cheaper things worth trying first, in rough order of promise:
    databases.
 3. The `X-Token` / `passwordToken` from ipatool's encrypted account blob, sent as a header. The
    MZFinance endpoints authenticate by cookie, but this DAAP service may want the token directly.
-4. The other bag keys. `accountSummary`
-   (`buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/accountSummary`) is plist-based and already
-   reachable with the cookies ipatool holds; it may carry purchase data without any DAAP work at
-   all. This is the least exotic path and was not tried.
+4. ~~The other bag keys. `accountSummary` … the least exotic path and was not tried.~~
+   **Tried 2026-08-13. It is a dead end for the cookies alone — see below.**
+
+## `accountSummary` and the purchases page, measured 2026-08-13
+
+Both refuse the stored session, and they refuse it *coherently*, which is the useful part.
+
+| request | result |
+|---|---|
+| `GET accountSummary` + cookie jar | **200**, plist, `failureType 5008`, `MZFinance.AccountSummaryLoginRequired`, "Sign-In Required" |
+| `GET MZStoreElements.woa/wa/purchases` (`dt-purchases-page` from the bag) | **200**, plist, `dialog.kind = authorization`, "Sign In To View Purchased Items" |
+| `POST accountSummary` to **`p3-buy`**, plist body, `iCloud-DSID` + `X-Dsid`, ipatool's UA — the exact shape ipatool authenticates a download with | **200**, `failureType 5008`, "Sign in to view account information." |
+
+The third row is the informative one. That is byte-for-byte how ipatool asks for a download — pod
+prefixed host, POST, `application/x-apple-plist`, both DSID headers — and the same credentials that
+download an .ipa are refused here.
+
+**So the session ipatool leaves behind is a STORE session, not an ACCOUNT session.** It is enough to
+fetch something you already own and not enough to ask what you own. That is a coherent design on
+Apple's part rather than an obstacle to route around, and it explains the DAAP 400s above just as
+well: the handshake is not missing a parameter, it is missing an authenticated identity.
+
+**The remaining candidate is `X-Token`.** ipatool sends `X-Token: acc.PasswordToken` on exactly one
+call — `purchase` — and on none of the read paths, which is consistent with account-level operations
+needing it. The token lives encrypted in ipatool's credential store beside the cookies.
+
+**Getting it was not attempted, deliberately.** Decrypting another program's credential store to
+replay a user's password token against Apple's account API is a different act from using the session
+ipatool already maintains for downloads, and it is the user's call rather than an implementation
+detail. If it is ever taken up: it needs the account's keychain passphrase (springback stores one per
+account), the scheme is `github.com/byteness/keyring`'s file backend, and the result must never be
+logged or persisted anywhere.
+
+**What this does not rule out.** The account was signed in ~7 hours before these probes and the
+cookie jar's short-lived `session-store-id` had expired, though the durable `mz_at_ssl` had not. A
+fresh sign-in immediately before retrying was not tested, and would cost nothing to try next time
+somebody signs in.
 
 ## A caution for whoever picks this up
 

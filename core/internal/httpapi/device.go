@@ -100,6 +100,12 @@ func (s *Server) deviceUnpair(w http.ResponseWriter, r *http.Request) {
 	if s.Devices != nil && s.Devices.Cache != nil {
 		s.Devices.Cache.Forget(r.PathValue("udid"))
 	}
+	// And its remembered apps, for the same reason and more strongly: that list names every app
+	// on somebody's phone. "Forget this device" has to mean it, or the Apps screen would go on
+	// listing a device that springback has just claimed not to know.
+	if s.Devices != nil && s.Devices.Seen != nil {
+		_ = s.Devices.Seen.Forget(r.PathValue("udid"))
+	}
 	s.Kick()
 	w.WriteHeader(http.StatusNoContent)
 }

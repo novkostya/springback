@@ -179,6 +179,8 @@ Everything under `/api` needs a session, bar `/api/health` and the auth endpoint
     POST   /api/devices/<udid>/unpair
     POST   /api/devices/<udid>/wifi-sync    {enable}
 
+    GET    /api/apps?q=<text>               everything seen on any device, ever, + the library
+
     GET    /api/library                     list
     POST   /api/library                     {app_id, account_slug}  -> job id
     DELETE /api/library/<id>
@@ -225,6 +227,17 @@ installed apps with a store status each: `available` / **`DELISTED`** / `unknown
 sort first and carry an **Archive** button — which is the whole product in one gesture. The count
 is stated plainly: *"4 of 162 apps on this iPhone are no longer in the App Store."* A search box
 sits over the list, because two hundred rows is past what scrolling answers.
+
+**Apps.** Everything springback has ever seen on any of your devices, unioned with the library and
+searchable by name or bundle id. Each row says where the app lives — on a device that is here, on
+one that is not (with how long ago it was seen), or only in the archive.
+
+*Why it is not a store search.* A download only works for an app the account already owns, so
+searching the App Store returns mostly things you cannot have — and it cannot return a delisted app
+at all, which is the case this tool exists for. The receipts on your devices are proof of ownership
+that survives the listing being pulled, so they are the set worth searching. It also answers with
+every device asleep, which the per-device screen cannot: the old iPad in a drawer is exactly where
+something irreplaceable is likely to be.
 
 **Library.** What has been downloaded: icon, name, version, size, when, which account. Tapping
 one opens the app page — install to any device, re-download, delete.
