@@ -50,6 +50,22 @@ async function api(path, opts = {}) {
 
 let booted = false;
 
+// leaving suppresses the router for the two navigations that are meant to actually LEAVE: signing
+// out, and reloading after a session expires.
+//
+// The navigate handler intercepts every same-origin navigation, which is right for every link in
+// the app and wrong for those two. `location.href = "/"` was being turned into an in-page route
+// change to the Devices screen, so the document — and every device, app and account already in
+// memory — survived. What the user saw was Devices for a couple of seconds, then the login form,
+// once a poll happened to hit a 401. A reload is intercepted the same way, and would defeat the
+// whole point of reloading: the password form has to arrive with the document for a password
+// manager to offer to fill it.
+//
+// Declared HERE, above regate, rather than beside the sign-out handler where it used to live —
+// regate reads it, and a `let` referenced before its declaration runs is a crash waiting for the
+// first person to call regate a little earlier than it is called today.
+let leaving = false;
+
 function showGate(state) {
   const setup = state === "needs_setup";
   // NOTHING KEEPS FEEDING A GATED PAGE. The server closes the socket within a ping of the
@@ -102,17 +118,38 @@ async function authStatus() {
 // question.
 let regating = false;
 async function regate() {
-  if (regating) return;
+  // `leaving` means a reload is already on its way out. Several requests fail together when a
+  // session dies, and each one arriving after that would ask for another.
+  if (regating || leaving) return;
   regating = true;
   try {
     const st = await authStatus();
     applyTransport(st);
     // Someone signed in while this was in flight; leaving the gate up would lock them out of
     // a session they now hold.
-    if (st.state !== "authenticated") showGate(st.state);
+    if (st.state === "authenticated") return;
+
+    // A REAL PAGE LOAD, NOT A REVEALED OVERLAY — and the reason is the password manager. Safari
+    // offers to fill a login form it finds when the document loads; a form uncovered later by
+    // script is not that, so an expired session dropped the user at a sign-in box with no
+    // autofill and no explanation of why their usual tap did nothing. Reported.
+    //
+    // reload() rather than a trip to "/", so signing in comes back to the page they were on.
+    // `leaving` is what stops the router turning this into an in-page route change, which is
+    // exactly the trap the sign-out path fell into.
+    //
+    // Only once the app has BOOTED. Before that, the gate is already being drawn by a genuine
+    // page load, and reloading would be a loop.
+    if (booted) {
+      leaving = true;
+      location.reload();
+      return;
+    }
+    showGate(st.state);
   } catch {
-    // The server is unreachable, so its state is unknowable. Sign-in is the safer of the two
-    // to offer: it cannot destroy anything, and setup would 409 if a password did exist.
+    // The server is unreachable, so its state is unknowable — and reloading would replace the
+    // app with the browser's own error page. Sign-in is the safer of the two to offer: it
+    // cannot destroy anything, and setup would 409 if a password did exist.
     showGate("needs_login");
   } finally {
     regating = false;
@@ -147,15 +184,6 @@ $("#gate-form").onsubmit = async (ev) => {
     btn.textContent = label;
   }
 };
-
-// leaving suppresses the router for the one navigation that is meant to LEAVE.
-//
-// The navigate handler intercepts every same-origin navigation, which is right for every link in
-// the app and wrong for exactly one thing: signing out. `location.href = "/"` was being turned
-// into an in-page route change to the Devices screen, so the document — and every device, app
-// and account already in memory — survived. What the user saw was Devices for a couple of
-// seconds, then the login form, once a poll happened to hit a 401.
-let leaving = false;
 
 $("#sign-out").onclick = async () => {
   // Up FIRST, before any await. Whatever happens next, the screen must not still be showing
