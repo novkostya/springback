@@ -4,11 +4,11 @@
 # cable. This one runs the muxer in a container too, and netmuxd speaks both transports: USB, and
 # Wi-Fi devices found over mDNS. Nothing is installed on the host.
 #
-# The split is not arbitrary. Exactly one of these containers needs the host's network and its USB
-# bus; the other is an ordinary web app that only needs to reach it:
+# Exactly one of these containers needs the host's network and its USB bus; the other is an
+# ordinary web app that only needs to reach it, over a unix socket in a shared volume:
 #
-#   netmuxd     host network (mDNS is link-local and cannot cross a bridge) + /dev/bus/usb
-#   springback  the default network, one published port, and a TCP address for the muxer
+#   netmuxd     host network (mDNS is link-local and cannot cross a bridge) + the USB bus
+#   springback  the default network, one published port, and the socket
 #
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 # THE ORDER OF OPERATIONS THAT ACTUALLY MATTERS
@@ -19,8 +19,8 @@
 # empty directory it discovers every phone on the network and serves none of them — measured, and
 # it logs "No paired device matched service ...".
 #
-# So: plug the device in over USB once and pair it. That writes the record, both containers see
-# it through the shared mount, and from then on Wi-Fi is enough.
+# So: plug the device in over USB once and pair it from the Devices screen. That writes the
+# record into ./data/lockdown, both containers see it, and from then on Wi-Fi is enough.
 # ─────────────────────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -35,26 +35,32 @@ services:
     # local link — a bridged container is on a different link and hears none of it.
     network_mode: host
 
-    # USB. The bind mount is what lets netmuxd talk to a device on the cable.
-    #
-    # NOT VERIFIED HERE, and worth saying plainly: everything else in this file was measured, but
-    # the machine it was measured on had no device on USB. Two things to know if it misbehaves —
-    # a device plugged in AFTER the container starts may not appear inside it, because a bind
-    # mount does not propagate new device nodes unless it is shared; and some hosts need
-    # `privileged: true` for raw USB access. If a cabled device does not show up, try:
-    #   privileged: true
-    #   volumes: [/dev:/dev]
+    # USB. The bind mount exposes the device nodes; the cgroup rule is what actually permits
+    # reading and writing them (189 is the USB device major). Narrower than `privileged: true`,
+    # which is the usual advice and grants far more than this needs.
+    device_cgroup_rules:
+      - "c 189:* rmw"
     volumes:
       - /dev/bus/usb:/dev/bus/usb
-      # The pairing records, READ-WRITE, shared with springback below — springback writes them
-      # when you pair, netmuxd reads them to recognise a device over Wi-Fi.
+      # The pairing records, shared with springback: springback writes one when you pair,
+      # netmuxd reads it to recognise that device over Wi-Fi afterwards.
       - ./data/lockdown:/var/lib/lockdown
+      - mux:/run/mux
 
+    # A muxer is otherwise completely silent, and `docker logs netmuxd` is the first place to
+    # look when a device does not appear. At `info` it names every device it adds and says
+    # "No paired device matched service ..." for each one it discovers and cannot identify —
+    # which is the single most useful line in this whole file when something is wrong.
+    environment:
+      RUST_LOG: info
+
+    # NO --host AND NO --port, so netmuxd listens on a unix socket and nothing else. A muxer has
+    # no authentication in front of it: anything that can reach it can talk to every device it
+    # serves. A socket in a shared volume is reachable by exactly the containers that mount it,
+    # which is the smallest surface that works.
     command:
-      - "--host"
-      - "172.17.0.1"         # the docker bridge, NOT loopback — see the note at the bottom
-      - "--port"
-      - "27015"
+      - "--socket-path"
+      - "/run/mux/usbmuxd"
       - "--plist-storage"
       - "/var/lib/lockdown"
 
@@ -66,37 +72,21 @@ services:
     ports:
       - "8971:8971"
 
-    # host.docker.internal resolves to the host from inside a container. `host-gateway` is what
-    # makes that work on Linux, and it is needed even on a compose-managed network — measured on
-    # Docker 29 / Debian 13, where a container on the project network reached the host this way.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
+    # THE DIRECTORY IS MOUNTED, NOT THE SOCKET FILE — and that is a bug fix, not a style. Bind
+    # mounting `mux/usbmuxd` straight onto /var/run/usbmuxd would need libimobiledevice's default
+    # path and no environment variable at all, which is tidier and was measured to work. But if
+    # springback starts before netmuxd has bound, Docker creates a DIRECTORY where the socket
+    # should be, and netmuxd can then never bind there. `depends_on` does not help: it waits for
+    # the container to start, not for the socket to exist. Mounting the directory has no such
+    # race, because the directory is always there.
     environment:
-      USBMUXD_SOCKET_ADDRESS: "host.docker.internal:27015"
+      USBMUXD_SOCKET_ADDRESS: "UNIX:/run/mux/usbmuxd"
 
     volumes:
       - ./data/library:/library      # the archives — this is the one that grows
       - ./data/accounts:/accounts    # Apple ID sessions and your springback password
       - ./data/lockdown:/var/lib/lockdown
+      - mux:/run/mux
 
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-# Why `--host 172.17.0.1` and not something more obvious
-#
-# There is no password in front of a muxer. Anything that can reach that port can talk to every
-# device it serves, so where it listens is a real decision. All three candidates were measured
-# from a springback container on a compose-managed network:
-#
-#   --host 127.0.0.1     listener 127.0.0.1:27015     UNREACHABLE from the container
-#   --host 172.17.0.1    listener 172.17.0.1:27015    reachable, and invisible to the LAN
-#   --host 0.0.0.0       listener 0.0.0.0:27015       reachable, and offered to the whole LAN
-#
-# So loopback — the instinctive safe answer — simply does not work: a container reaches the host
-# by its bridge address, not through the host's loopback. 172.17.0.1 is the docker0 bridge, which
-# is exactly the address `host.docker.internal:host-gateway` resolves to, and it is not routable
-# from anywhere off the machine.
-#
-# If your Docker uses a different bridge subnet, match this to whatever
-# `docker network inspect bridge` reports as its gateway. Binding 0.0.0.0 will also work and will
-# also hand your devices to anyone on the network; if you do that, firewall the port.
-# ─────────────────────────────────────────────────────────────────────────────────────────────
+volumes:
+  mux:
