@@ -36,8 +36,20 @@ services:
     network_mode: host
 
     # USB. The bind mount exposes the device nodes; the cgroup rule is what actually permits
-    # reading and writing them (189 is the USB device major). Narrower than `privileged: true`,
-    # which is the usual advice and grants far more than this needs.
+    # reading and writing them (189 is the USB device major).
+    #
+    # UNPRIVILEGED IS ENOUGH. `privileged: true` is the usual advice for USB in a container and
+    # grants far more than this needs; these two lines are the whole requirement.
+    #
+    # HOTPLUG DOES NOT WORK, and that is worth knowing before it confuses you. A device plugged
+    # in AFTER this container started will not appear inside it: a bind mount does not propagate
+    # device nodes created later. The remedy is one command —
+    #
+    #     docker compose restart netmuxd
+    #
+    # — and it matters exactly once per device, because pairing is once per device and Wi-Fi
+    # needs no cable afterwards. Running the muxer in a container is a known trade with a known
+    # price; this is the price.
     device_cgroup_rules:
       - "c 189:* rmw"
     volumes:

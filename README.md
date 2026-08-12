@@ -53,31 +53,52 @@ on the door, and that is all there is. Do not put it on the public internet.
 
 ## Running it
 
-You need a Linux box with Docker or Podman, and `usbmuxd` running **on the host** — that is the
-daemon that owns the USB port your iPhone is plugged into. springback deliberately does not
-contain one, because two of them fight over the same devices.
+You need a Linux box with Docker, and a cable for the first pairing.
 
-```sh
-# Debian/Ubuntu: apt install usbmuxd   ·   Arch: pacman -S usbmuxd   ·   Alpine: apk add usbmuxd
-sudo systemctl enable --now usbmuxd
-```
+springback does not talk to iPhones by itself — it drives Apple's userland
+([libimobiledevice](https://github.com/libimobiledevice/libimobiledevice)), and that needs a
+*muxer*: the daemon that owns the USB bus and multiplexes connections to devices. This setup runs
+one, [netmuxd](https://github.com/jkcoxson/netmuxd), in its own container. Nothing is installed on
+the host, and it handles devices on Wi-Fi as well as on the cable.
 
-Then:
+Grab [`deploy/compose.netmuxd.yml`](deploy/compose.netmuxd.yml) — it is commented with the
+reasoning — or start from this:
 
 ```yaml
 # compose.yml
 services:
+  netmuxd:
+    build: https://github.com/jkcoxson/netmuxd.git   # no published image; a Rust build, once
+    container_name: netmuxd
+    restart: unless-stopped
+    network_mode: host          # mDNS is link-local; a bridged container never hears it
+    device_cgroup_rules:
+      - "c 189:* rmw"           # USB device major. Enough — no `privileged: true` needed
+    environment:
+      RUST_LOG: info            # the first place to look when a device does not appear
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      - ./data/lockdown:/var/lib/lockdown
+      - mux:/run/mux
+    command: ["--socket-path", "/run/mux/usbmuxd", "--plist-storage", "/var/lib/lockdown"]
+
   springback:
     image: ghcr.io/novkostya/springback:latest
     container_name: springback
     restart: unless-stopped
+    depends_on: [netmuxd]
     ports:
       - "8971:8971"
+    environment:
+      USBMUXD_SOCKET_ADDRESS: "UNIX:/run/mux/usbmuxd"
     volumes:
-      - ./data/library:/library          # the archived .ipa files — this is the one that grows
-      - ./data/accounts:/accounts        # Apple ID sessions and your password. Back this up.
-      - /var/run/usbmuxd:/var/run/usbmuxd
-      - /var/lib/lockdown:/var/lib/lockdown
+      - ./data/library:/library      # the archives — this is the one that grows
+      - ./data/accounts:/accounts    # Apple ID sessions and your password. Back this up.
+      - ./data/lockdown:/var/lib/lockdown
+      - mux:/run/mux
+
+volumes:
+  mux:
 ```
 
 ```sh
@@ -87,8 +108,34 @@ docker compose up -d
 Open `http://<the box>:8971`. The first page asks you to choose a password — there is nothing to
 configure before starting, and no password sitting in the compose file.
 
-A fuller compose file with the variations spelled out is in
-[`deploy/compose.yml`](deploy/compose.yml).
+**Two things about that muxer, both of which will otherwise waste your afternoon.**
+
+*A device plugged in after the containers started will not be seen.* A bind mount does not
+propagate device nodes created later, so plug the device in and then:
+
+```sh
+docker compose restart netmuxd
+```
+
+This matters exactly once per device, because pairing is once per device.
+
+*Wi-Fi devices only appear once they are paired.* An mDNS advertisement carries no serial number,
+so netmuxd matches it against the pairing records it holds to work out which phone it is looking
+at. With no record it discovers every device on the network and serves none of them — it logs
+`No paired device matched service …`. Pair over the cable once; Wi-Fi is enough after that.
+
+### If you would rather not run netmuxd
+
+`usbmuxd` from your distribution works too, on the host, and springback then needs only its
+socket. Simpler, and it only ever sees devices on the cable — no Wi-Fi.
+
+```sh
+# Debian/Ubuntu: apt install usbmuxd  ·  Arch: pacman -S usbmuxd  ·  Alpine: apk add usbmuxd
+sudo systemctl enable --now usbmuxd
+```
+
+with [`deploy/compose.yml`](deploy/compose.yml), which mounts `/var/run/usbmuxd` straight into
+springback.
 
 ### Then, roughly
 
@@ -122,21 +169,11 @@ springback.example.com {
 }
 ```
 
-### Reaching devices over Wi-Fi
+### Keeping devices reachable over Wi-Fi
 
-Plain `usbmuxd` only sees devices on the cable. To reach a sleeping iPhone across the room you
-need something that speaks the mux protocol over the network — [netmuxd](https://github.com/jkcoxson/netmuxd)
-is the usual answer. Point springback at it instead of the socket:
-
-```yaml
-    network_mode: host        # netmuxd binds 127.0.0.1, which a bridged container cannot reach
-    environment:
-      USBMUXD_SOCKET_ADDRESS: "127.0.0.1:27015"
-```
-
-and drop the `/var/run/usbmuxd` mount. Pairing still needs a cable once; after that Wi-Fi is
-enough, as long as the device's Wi-Fi sync flag is on — there is a switch for it on each device's
-page.
+Once a device is paired, it answers over Wi-Fi as long as its Wi-Fi sync flag is on — there is a
+switch for it on each device's page. Turn it off and the device only answers on the cable: it
+leaves the network entirely and springback stops seeing it.
 
 ---
 
