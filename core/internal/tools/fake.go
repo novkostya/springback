@@ -71,6 +71,7 @@ type fakeDevice struct {
 func NewFake() *Fake {
 	const iphone = "00008110-0011223344556677"
 	const ipad = "00008120-0089ABCDEF012345"
+	const asleep = "00008101-00FEDCBA98765432"
 	// The Apple ID every receipt names. A placeholder: the fixture is about the SHAPE of a
 	// receipt, not about whose account it came from.
 	const owner = "owner@example.com"
@@ -82,12 +83,22 @@ func NewFake() *Fake {
 				IOS: "26.6", Region: "AE/A",
 			}, true},
 			// LL/A is the fixture that keeps the storefront mapping honest: read naively
-			// it produces country=ll, which the live API answers with HTTP 400. It is
-			// also ASLEEP, so the "paired but not currently reachable" path is on screen
-			// by default rather than only when someone remembers to test it.
+			// it produces country=ll, which the live API answers with HTTP 400.
+			//
+			// AWAKE AND UNPAIRED, which is the state a device is in at the one moment the
+			// pairing screen exists for: just plugged in, not yet trusted. Left asleep it
+			// could never reach the Pair button, because pairing needs the cable — so the
+			// newest and least-exercised screen in the app would be unreachable without
+			// hardware, which is the one thing the fake is for.
 			ipad: {Device{
 				UDID: ipad, Name: "Example iPad", ProductType: "iPad15,7",
 				IOS: "26.6", Region: "LL/A",
+			}, true},
+			// And one that is asleep, so "paired but not currently reachable" is on screen
+			// by default too. Devices come and go; that is normal, not an error.
+			asleep: {Device{
+				UDID: asleep, Name: "Example iPhone (asleep)", ProductType: "iPhone15,2",
+				IOS: "26.5", Region: "ZA/A",
 			}, false},
 		},
 		apps: map[string][]InstalledApp{
@@ -126,6 +137,7 @@ func NewFake() *Fake {
 				// nothing to accuse it of.
 				{BundleID: "com.example.sideloaded", Version: "0.9", Name: "Sideloaded Thing"},
 			},
+			asleep: {},
 			ipad: {
 				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
 					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: owner, Storefront: "ru"},

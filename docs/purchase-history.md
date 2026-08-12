@@ -1,7 +1,7 @@
 # Purchase-history enumeration — research notes
 
 **Status:** partial. The endpoint is FOUND and confirmed live; the session handshake is not solved.
-Investigated 2026-08-11 against a real signed-in Apple ID on the staging stand.
+Investigated 2026-08-11 against a real signed-in Apple ID.
 
 SPEC §8 deferred this with:
 

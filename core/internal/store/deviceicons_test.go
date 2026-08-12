@@ -45,7 +45,24 @@ func newTestIcons(t *testing.T) (*DeviceIcons, *countingTools, string) {
 	if err != nil || len(udids) == 0 {
 		t.Fatalf("fake has no reachable device: %v", err)
 	}
-	return d, ct, udids[0]
+	// THE DEVICE WITH THE MOST APPS, not simply the first. The fake withholds an icon from
+	// every fourth app, so a device with two of them has no missing-icon case in it at all —
+	// and `udids[0]` is whichever one Go's map iteration happened to yield, which made these
+	// tests pass or fail at random.
+	best, most := "", -1
+	for _, u := range udids {
+		apps, err := ct.ListApps(context.Background(), u)
+		if err != nil {
+			continue
+		}
+		if len(apps) > most {
+			best, most = u, len(apps)
+		}
+	}
+	if most < 4 {
+		t.Fatalf("no fake device has enough apps to cover both icon cases (most = %d)", most)
+	}
+	return d, ct, best
 }
 
 // appsOf returns the fake device's apps, split into the ones the fake gives an icon for and the

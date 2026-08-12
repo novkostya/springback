@@ -1,0 +1,46 @@
+# Gates, on every push and pull request.
+#
+# THE GATES RUN THE SAME WAY THEY DO LOCALLY — `make gates`, inside a container built from the
+# Dockerfile's own toolchain stage. That is the whole point of the containerised setup: CI is not
+# a second, subtly different environment with its own Go version and its own linter, drifting
+# from what a developer sees. If it passes here it passed with the same bytes.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Cancel a superseded run rather than paying for a result nobody will read.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: gofmt, vet, golangci-lint, go test -race
+        run: make gates
+
+  image:
+    # Proves the release image still builds, including the two C helpers and go:embed of the UI.
+    # Separate from the gates so a broken Dockerfile and a broken test are distinguishable at a
+    # glance rather than being one red X.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: build the production image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: runtime
+          push: false
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

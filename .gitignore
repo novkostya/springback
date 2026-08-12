@@ -10,3 +10,11 @@
 # first commit went out without it and built fine, because the Docker build has its own copy of
 # the tree — nothing surfaced the omission until a clean checkout was tried.
 /springback
+
+# GitHub Actions workflows live in deploy/ci/ and are COPIED here, not edited here.
+#
+# Not a preference: the credential this repo is pushed with is a GitHub App without the
+# `workflows` permission, so any push that touches .github/workflows is rejected outright —
+# including pushes that only meant to change Go code. Keeping the canonical copies under
+# deploy/ci/ keeps them in version control and keeps every other push working. See deploy/ci/README.md.
+/.github/
