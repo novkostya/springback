@@ -171,10 +171,16 @@ func (s *Server) watchJobs(ctx context.Context) {
 // waits for the first event to learn anything — and "nothing is changing" is the normal state of
 // this app. With it, opening the socket is as good as a fetch.
 func (s *Server) liveHello() []live.Envelope {
-	out := []live.Envelope{{
-		Type: live.TypeHello,
-		Data: map[string]any{"version": version.Version, "fake": s.Fake},
-	}}
+	hello := map[string]any{"version": version.Version, "fake": s.Fake}
+	// WHETHER PAIRING RECORDS CAN BE WRITTEN IS A FACT ABOUT THE BOX, not about a device — the
+	// same answer for every one of them. It used to be reported only per-device, so the device
+	// page drew its pairing controls from what it could see and then withdrew them a moment later
+	// when the fetch admitted the directory was read-only. Sent once, up front, it is known before
+	// any device page is opened.
+	if s.Tools != nil {
+		hello["pairing_writable"] = s.Tools.PairingWritable()
+	}
+	out := []live.Envelope{{Type: live.TypeHello, Data: hello}}
 
 	s.mu.Lock()
 	last := s.lastDevices

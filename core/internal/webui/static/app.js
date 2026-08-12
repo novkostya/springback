@@ -543,6 +543,14 @@ let deviceUDID = null;
 // appFilter is the search box's text, kept out of the DOM so a re-render cannot lose it.
 let appFilter = "";
 
+// pairingWritable is whether this BOX can write pairing records — the same answer for every
+// device, so it is learned once and remembered. null until something says.
+//
+// It arrives with the socket's greeting, and is also picked up from the first device page that
+// loads, which covers a browser whose socket never opened. Knowing it early is what lets a
+// read-only setup say so immediately instead of offering an Unpair button and taking it back.
+let pairingWritable = null;
+
 // deviceStateLoading stops a failed fetch from becoming a loop. renderDevice asks for the state
 // when it has none, and a failure leaves it with none — so without this the two would call each
 // other for as long as the page stayed open.
@@ -552,7 +560,9 @@ async function loadDeviceState(udid) {
   if (deviceStateLoading.has(udid)) return;
   deviceStateLoading.add(udid);
   try {
-    deviceState.set(udid, await api(`/api/devices/${encodeURIComponent(udid)}`));
+    const st = await api(`/api/devices/${encodeURIComponent(udid)}`);
+    deviceState.set(udid, st);
+    if (typeof st.can_pair === "boolean") pairingWritable = st.can_pair;
   } catch {
     // Record the failure as an answer, so the row stops shimmering and says what it knows.
     // Re-asking is what Refresh is for.
@@ -656,12 +666,63 @@ function renderDevice() {
   // Ask for it if nobody has, the same way the app list does. Navigation fetches it too; this is
   // what keeps a shimmer from outliving whatever cleared the cache.
   if (!stLoaded) loadDeviceState(udid);
+  facts.push(pairFact(udid, d.pair, st, stLoaded));
   if (d.pair === "paired") facts.push(wifiFact(udid, st, stLoaded));
 
   const blocks = [back, head, el("dl", { className: "facts" }, facts)];
   blocks.push(...pairingBlock(udid, st, transport, d.pair, stLoaded));
   blocks.push(...appsBlock(udid, d, payload));
   root.replaceChildren(...blocks);
+}
+
+// pairFact is the pairing row: what the state is, and — for a paired device — a quiet way out.
+//
+// A ROW RATHER THAN A SECTION, because for a paired device that is all there is to say. It was a
+// heading, a sentence and a button on three separate lines, which is a lot of page for "yes, this
+// works", and it left the screen looking like a form with a field missing. The section below now
+// appears only when there is something to DO.
+function pairFact(udid, pair, st, loaded) {
+  const dd = el("dd");
+  // The STATE still waits for this page's own answer, because the list only knows whether a
+  // record exists and this also reflects whether the device still honours it.
+  if (!loaded) {
+    dd.append(el("span", { className: "sk sk-line sk-value" }));
+    return el("div", { className: "fact" }, [el("dt", { textContent: "Pairing" }), dd]);
+  }
+
+  if (pair === "paired") {
+    dd.append(el("span", { textContent: "Paired with this host" }));
+    // Only offered when the records can actually be written. THE FLASH THIS FIXES: the button
+    // used to be drawn from the list's pairing state, which arrives first, and then vanish when
+    // the device's own details revealed a read-only directory. An action that appears and then
+    // withdraws is worse than one that arrives a moment late.
+    if (canPair(st) !== false) {
+      const b = el("button", { className: "link danger inline", type: "button", textContent: "Unpair" });
+      b.onclick = async () => {
+        if (!confirm("Unpair this device? springback will not be able to reach it again until it is paired over USB.")) return;
+        b.disabled = true;
+        try {
+          await api(`/api/devices/${encodeURIComponent(udid)}/unpair`, { method: "POST" });
+          toast("Unpaired.");
+        } catch (e) { toast(e.message, true); }
+        b.disabled = false;
+        await loadDeviceState(udid);
+      };
+      dd.append(b);
+    }
+  } else if (pair === "unpaired") {
+    dd.append(el("span", { textContent: "Not paired with this host" }));
+  } else {
+    dd.append(el("span", { className: "dim", textContent: "unknown — the device is not answering" }));
+  }
+  return el("div", { className: "fact" }, [el("dt", { textContent: "Pairing" }), dd]);
+}
+
+// canPair answers "can this box write pairing records" from whichever source knows: this device's
+// own details if they have arrived, otherwise what the box said when the socket opened.
+function canPair(st) {
+  if (typeof st.can_pair === "boolean") return st.can_pair;
+  return pairingWritable;
 }
 
 // wifiFact is the Wi-Fi sync row: the value, and a quiet way to change it.
@@ -706,36 +767,41 @@ function wifiFact(udid, st, loaded) {
   return el("div", { className: "fact" }, [el("dt", { textContent: "Wi-Fi sync" }), dd]);
 }
 
-// pairingBlock is the settings half of the page: is this host trusted by the device, and will
-// the device answer when it is not plugged in.
-//
 // PAIR IS PROMINENT AND UNPAIR IS NOT, deliberately. Pairing is the one thing standing between a
-// new device and everything else on this page, and it is done once. Unpairing is rare, hard to
+// new device and everything else on this page, and it is done once. Unpairing is rare and hard to
 // undo — it needs physical access and a cable — and had exactly the same full-width weight, which
 // is an invitation to the wrong button.
+//
+// pairingBlock is what is left once the state itself moved into the facts table: the things to
+// DO. For a paired device on a writable directory that is nothing at all, and the section does not
+// appear — which is the point.
+//
+// NOTHING RENDERS UNTIL THE DEVICE'S OWN DETAILS LAND. The pairing STATE can be shown early
+// because the list already knows it, but everything here depends on can_pair, which only this
+// page's fetch reports. Drawing it from the list's answer alone meant a read-only setup showed an
+// Unpair button and a "paired" section for a moment and then replaced them with an explanation
+// that they were never possible. Reported.
 function pairingBlock(udid, st, transport, listPair, loaded) {
-  const out = [el("h3", { className: "sub-head", textContent: "Pairing" })];
+  const out = [];
+  const pair = st.pair || listPair || "unknown";
 
-  if (st.can_pair === false) {
+  // THE READ-ONLY CASE IS KNOWN BEFORE THIS PAGE FETCHES ANYTHING, because it is a fact about the
+  // box rather than about the device — so it is said at once rather than after a pause. Everything
+  // else here waits, since it depends on which state this particular device is in.
+  if (canPair(st) === false) {
     // A read-only pairing directory is the correct setup when something else owns the
     // records, so this explains rather than complains.
+    out.push(el("h3", { className: "sub-head", textContent: "Pairing" }));
     out.push(el("p", { className: "note plain", textContent:
       "The pairing directory is mounted read-only, so springback can read pairing records but not write them. " +
       "Pair the device with whatever owns them, or mount it read-write." }));
+    return out;
   }
 
-  // The LIST's answer until this page's own arrives. Both come from the pairing records, so they
-  // agree; the difference is that the list is already in hand. Falling back to "unknown" here
-  // meant the page opened by announcing "the device is not answering" about a device that had not
-  // been asked yet — alarming, and wrong a second later.
-  const pair = st.pair || listPair || "unknown";
-  const label = pair === "paired" ? "Paired with this host"
-    : pair === "unpaired" ? "Not paired with this host"
-    : loaded ? "Pairing state unknown — the device is not answering"
-    : "Checking…";
-  out.push(el("p", { className: "hint", textContent: label }));
+  if (!loaded) return out;
 
-  if (pair === "unpaired" && st.can_pair !== false) {
+  if (pair === "unpaired") {
+    out.push(el("h3", { className: "sub-head", textContent: "Pairing" }));
     // Live, so plugging the cable in ENABLES the Pair button then and there. It is the one
     // control whose whole precondition is the transport, and leaving it on the snapshot meant
     // connecting a cable to a device you were looking at left Pair greyed out.
@@ -757,23 +823,8 @@ function pairingBlock(udid, st, transport, listPair, loaded) {
     out.push(b);
   }
 
-  if (pair === "paired" && st.can_pair !== false) {
-    const b = el("button", { className: "link danger", type: "button", textContent: "Unpair" });
-    b.onclick = async () => {
-      if (!confirm("Unpair this device? springback will not be able to reach it again until it is paired over USB.")) return;
-      b.disabled = true;
-      try {
-        await api(`/api/devices/${encodeURIComponent(udid)}/unpair`, { method: "POST" });
-        toast("Unpaired.");
-      } catch (e) { toast(e.message, true); }
-      b.disabled = false;
-      await loadDeviceState(udid);
-    };
-    // On its own line and left-aligned with the text above it, so it reads as the small print of
-    // the pairing state rather than as something to do next.
-    out.push(el("div", { className: "quiet-actions" }, [b]));
-  }
-
+  // Nothing for a paired device: its state, and the way to undo it, are one row in the table
+  // above.
   return out;
 }
 
@@ -984,12 +1035,21 @@ function renderAppDetail() {
   // every screen or be added and removed, and the second reflowed the title by 54px on every
   // navigation. Here it belongs to the thing it goes back from, names where it goes, and the
   // header never changes at all.
-  const backLabel = parentTab() === "library" ? "Library" : "Devices";
-  const back = el("button", { className: "detail-back", type: "button" }, [`‹ ${backLabel}`]);
+  // NAME WHERE IT GOES, WHICH FOR AN APP OPENED FROM A PHONE IS THE PHONE. It said "Devices"
+  // because that is the tab it belongs to, but back does not go to the tab — it goes to the
+  // device's own page, one step up. Reported.
+  const fromDevice = detail.device && !(detail.item && !detail.app);
+  const backLabel = fromDevice
+    ? deviceLabel(devices.find((x) => x.udid === detail.device.udid) || detail.device)
+    : parentTab() === "library" ? "Library" : "Devices";
+  const back = el("button", { className: "detail-back", type: "button", title: backLabel }, [`‹ ${backLabel}`]);
   back.onclick = () => {
     // history.back() when there IS somewhere to go back to, so the entry is popped rather than
-    // a duplicate pushed. On a cold deep link there is not, and going to the list is right.
+    // a duplicate pushed. On a cold deep link there is not, and the fallback has to match the
+    // label — going to the Devices list from a button that says a device's name would be a
+    // second surprise on top of the first.
     if (history.length > 1) history.back();
+    else if (fromDevice) navigate(`/device/${encodeURIComponent(detail.device.udid)}`);
     else navigate(parentTab() === "library" ? "/library" : "/");
   };
 
@@ -1106,20 +1166,29 @@ function renderAppDetail() {
         })(),
       );
     } else {
+      // QUIET, BECAUSE THERE IS NOTHING TO DO HERE. Either the copy is current or nobody knows,
+      // and re-fetching several hundred megabytes on the off-chance is not the action this screen
+      // is for. It was a full-width button in the DANGER colour, which is louder than the update
+      // it sits below and says "destructive" about a download. Reported as looking off.
       upd.append(
         el("p", { className: "hint", textContent:
           known
             ? `Up to date — the App Store has ${storeVersion} and so do you.`
-            : "Re-download to pick up a newer version, if there is one. Updating an app from another " +
-              "storefront here avoids the App Store's prompt for the owning Apple ID's password." }),
+            : "The store version is not known, so there is nothing to compare against." }),
         (() => {
-          const b = el("button", { className: "danger wide", textContent: "Re-download latest" });
+          const b = el("button", { className: "link plain", type: "button", textContent: "Re-download latest" });
           b.onclick = () => archive(item.id, pickedAccount(updateWith, `update:${item.id}`), item.name, b);
           return b;
         })(),
       );
     }
-    if (accounts.length) blocks.push(el("h3", { className: "sub-head", textContent: "Update" }), accountPicker(updateWith, `update:${item.id}`), upd);
+    // THE PICKER STAYS IN BOTH CASES. Re-downloading under a different Apple ID is a thing people
+    // do deliberately — a family-shared app, a re-purchase — and it needs this control to be here
+    // whether or not there is a newer version to fetch.
+    if (accounts.length) {
+      blocks.push(el("h3", { className: "sub-head", textContent: "Update" }),
+        accountPicker(updateWith, `update:${item.id}`), upd);
+    }
   }
 
   // --- install, as a LIST OF DEVICES with one tap each ---
@@ -1684,7 +1753,18 @@ async function renderRoute(url, { traverse = false } = {}) {
 // back arrow has left the header entirely and now lives on the detail screen itself.
 function showScreen(screen) {
   current = screen;
-  const lit = (screen === "app" || screen === "device") ? parentTab() : screen;
+  // NO TAB IS LIT BELOW THE TOP LEVEL. A tab means "you are on this screen", and on a device or an
+  // app you are not — you are one or two steps past it, with a back control of its own that names
+  // where it goes.
+  //
+  // This reverses an earlier decision, and the reason it is safe now is that the reason for it is
+  // gone. Detail screens used to light their parent tab because the underline vanishing on every
+  // push and returning on every pop was one more moving part in the header at exactly the moment a
+  // flicker was being chased. That flicker turned out to be the BACK ARROW being added to and
+  // removed from the header, reflowing the title by 54px; the arrow has since moved onto the
+  // screen it belongs to, and the header no longer changes size at all. An underline switching off
+  // is a colour change, not a reflow.
+  const lit = (screen === "app" || screen === "device") ? null : screen;
   for (const b of document.querySelectorAll("nav a")) {
     b.classList.toggle("active", b.dataset.screen === lit);
   }
@@ -1859,6 +1939,10 @@ $("#acc-start-over").onclick = () => {
 // another.
 $("#acc-email").addEventListener("input", () => { if (pendingSlug) resetSignin(); });
 
+// Typing is recorded so a failure can tell the two cases apart: a password somebody entered by
+// hand, and one that appeared in the field on its own. An autofilled field never sees a keystroke.
+$("#acc-pass").addEventListener("keydown", () => { $("#acc-pass").dataset.typed = "1"; });
+
 // The sign-in form is wired ONCE, against markup that was in the document at load. Nothing here
 // ever recreates an input, so nothing can clear what the user (or Safari) has put in one.
 $("#signin").addEventListener("submit", async (ev) => {
@@ -1906,7 +1990,15 @@ $("#signin").addEventListener("submit", async (ev) => {
       submit.textContent = "Finish sign-in";
       toast(e.body.detail);
     } else {
-      toast(e.message, true);
+      // A WRONG PASSWORD HERE HAS A LIKELY CULPRIT WORTH NAMING. The form used to look exactly
+      // like this site's own login, so a manager would fill the springback credential into it —
+      // and Apple's answer to that is an ordinary wrong-password, which points the reader at
+      // their Apple ID rather than at the browser. The markup no longer invites it; this covers
+      // an entry saved before it was fixed.
+      const filled = passEl.value.length > 0 && !passEl.dataset.typed;
+      toast(filled && /password|credential|incorrect/i.test(e.message)
+        ? `${e.message} — if the browser filled this in, check it is your Apple ID password rather than your springback one.`
+        : e.message, true);
       submit.textContent = original;
       // A CODE THAT FAILED IS NOT WORTH KEEPING. Apple's codes are single-use and expire, so
       // the one in the box is spent whatever went wrong — leaving it there invites resubmitting
@@ -2008,6 +2100,10 @@ function connectLive() {
     if (env.type === "hello") {
       liveConnected = true;
       liveBackoff = 1000;
+      // A deployment fact, so it arrives with the greeting rather than with each device.
+      if (env.data && typeof env.data.pairing_writable === "boolean") {
+        pairingWritable = env.data.pairing_writable;
+      }
       // The one-second job poll is now redundant. Stopping it here rather than letting it
       // expire keeps a download that was running through a reconnect from being polled and
       // pushed at the same time.

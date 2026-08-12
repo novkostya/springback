@@ -152,12 +152,22 @@
     <!-- No method/action: the handler always preventDefault()s, and a form that COULD navigate
          is one script error away from reloading the page with the password in a query string. -->
     <form id="signin" class="stack">
+      <!--
+        NOT A LOGIN FORM FOR THIS SITE, AND IT MUST NOT LOOK LIKE ONE. This form was
+        `name="username"` + `autocomplete="current-password"` — byte-identical to the gate above,
+        on the same origin — so a password manager offered the credential it had saved for
+        springback, and people signed in to Apple with their springback password. Reported after
+        a testing session: sign-in failed whenever it was autofilled and worked when typed.
+        Apple's answer is a plain wrong-password, which points at the Apple ID and not at the
+        browser that filled it.
+      -->
       <label for="acc-email">Apple ID email
-        <input type="email" id="acc-email" name="username" autocomplete="username"
+        <input type="email" id="acc-email" name="apple-id" autocomplete="off"
                autocapitalize="none" autocorrect="off" spellcheck="false" required>
       </label>
-      <label for="acc-pass">Password
-        <input type="password" id="acc-pass" name="password" autocomplete="current-password" required>
+      <label for="acc-pass">Apple ID password
+        <input type="password" id="acc-pass" name="apple-password" autocomplete="off" required>
+        <span class="hint">Your Apple ID's password — not the springback password you signed in with.</span>
       </label>
       <label for="acc-code" id="acc-2fa-wrap" hidden>Verification code
         <input type="text" id="acc-code" name="one-time-code" inputmode="numeric"

@@ -342,6 +342,9 @@ body.gated > #insecure-banner { display: none; }
 }
 
 .actions-block { margin: 16px 0; display: flex; flex-direction: column; gap: 10px; }
+/* A text button in a column of stretched controls would be a full-width invisible button with its
+   label floating in the middle. Shrink it to its text and put it where a link belongs. */
+.actions-block button.link { align-self: flex-start; padding-left: 0; }
 
 /* --- generic ------------------------------------------------------------- */
 
@@ -650,6 +653,12 @@ body { padding-top: var(--header-h); }
 .detail-back {
   display: inline-flex;
   align-items: center;
+  /* A device's name goes in here now, and people name phones whatever they like. Clamp it rather
+     than let one push the layout or wrap onto two lines. */
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   background: none;
   border: 0;
   color: var(--accent);

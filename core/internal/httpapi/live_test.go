@@ -53,6 +53,7 @@ func (s *stubTools) PairedUDIDs(context.Context) ([]string, error) {
 // device counts as paired — otherwise List would refuse to read its name, which is what these
 // tests watch for a change in.
 func (s *stubTools) PairingKnown() bool      { return true }
+func (s *stubTools) PairingWritable() bool   { return true }
 func (s *stubTools) Transport(string) string { return "usb" }
 
 func (s *stubTools) DeviceValue(_ context.Context, udid, key string) (string, error) {
