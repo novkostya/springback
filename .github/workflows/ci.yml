@@ -35,6 +35,15 @@ jobs:
 
       - uses: docker/setup-buildx-action@v3
 
+      # THE PINS COME FROM versions.env, WHICH IS THE POINT OF versions.env. The Makefile threads
+      # every one of them in as a --build-arg; build-push-action has no idea the file exists, so
+      # it has to be told. Without this the ARGs are empty strings and the failure lands inside
+      # somebody else's tool — measured: `git clone --branch  <url> .` reads the URL as the branch
+      # name and reports `fatal: repository '.' does not exist`, which names neither the build
+      # argument nor the workflow that forgot it.
+      - name: read the pins
+        run: grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
+
       - name: build the production image
         uses: docker/build-push-action@v6
         with:
@@ -42,5 +51,11 @@ jobs:
           file: deploy/Dockerfile
           target: runtime
           push: false
+          build-args: |
+            GO_IMAGE=${{ env.GO_IMAGE }}
+            ALPINE_IMAGE=${{ env.ALPINE_IMAGE }}
+            GOLANGCI_LINT_VERSION=${{ env.GOLANGCI_LINT_VERSION }}
+            IPATOOL_REF=${{ env.IPATOOL_REF }}
+            IDEVICEINSTALLER_REF=${{ env.IDEVICEINSTALLER_REF }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
