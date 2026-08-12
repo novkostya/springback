@@ -34,6 +34,21 @@ That is the whole list — `go list -deps` on the binary returns nothing else. N
 bundler, no CSS library: the UI is three hand-written files. (ISC is the two-clause permissive
 licence OpenBSD uses; it imposes nothing MIT does not.)
 
+## The muxer, which springback needs and does not ship
+
+Every device call goes through a *muxer* — the daemon that owns the USB bus. springback contains
+none, deliberately: only one may own the bus, so it uses whichever one the box already runs.
+Neither is distributed here, and both deserve the credit.
+
+| Project | What it does here | Licence |
+|---|---|---|
+| [usbmuxd](https://github.com/libimobiledevice/usbmuxd) | The standard muxer. Devices on the cable | **GPL-2.0** |
+| [netmuxd](https://github.com/jkcoxson/netmuxd) | The alternative the README's second setup uses. Adds Wi-Fi devices, found over mDNS | LGPL-2.1 |
+
+springback speaks to whichever is running over its socket, as any other client would, and ships
+neither — so these licences place no obligation on this repository. They are here because the
+project does not work without one of them.
+
 ---
 
 ## The licence position, stated plainly
