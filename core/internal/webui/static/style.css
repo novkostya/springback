@@ -185,7 +185,6 @@ body.gated > #insecure-banner { display: none; }
 .row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 .row:disabled { cursor: default; opacity: 0.55; }
 .row.static { cursor: default; }
-.device-row { background: var(--panel-2); }
 
 .row-main { flex: 1; min-width: 0; }
 .row-title {
@@ -600,7 +599,7 @@ body { padding-top: var(--header-h); }
 .sk-line { height: 13px; }
 .sk-line.sk-sub { height: 10px; margin-top: 7px; }
 .sk-pill { width: 74px; height: 18px; border-radius: 999px; flex-shrink: 0; }
-.sk-card .row { cursor: default; }
+.sk-card .row, .sk-list .row { cursor: default; }
 
 @keyframes sk-shimmer {
   from { background-position: 200% 0; }

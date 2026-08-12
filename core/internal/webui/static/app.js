@@ -311,7 +311,7 @@ function deviceLabel(d) {
 // is an <a href> for the same reason every other row is — the browser drives the navigation, the
 // back gesture and the scroll restoration, and none of it has to be reimplemented.
 function deviceRow(d) {
-  const r = el("a", { className: "row device-row", href: `/device/${encodeURIComponent(d.udid)}` }, [
+  const r = el("a", { className: "row", href: `/device/${encodeURIComponent(d.udid)}` }, [
     el("div", { className: "row-main" }, [
       el("div", { className: "row-title", textContent: deviceLabel(d) }),
       el("div", {
