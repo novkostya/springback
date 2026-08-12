@@ -1,0 +1,36 @@
+# Keep the action pins current, because nothing else here will.
+#
+# THIS FILE EXISTS BECAUSE OF A SPECIFIC FAILURE. The workflows were written pinned to
+# actions/checkout@v4 and the docker/* actions one major behind each, and the first release run
+# warned that every one of them targets a deprecated Node 20. Nobody chose those versions: they
+# are what you get writing a workflow from memory, since v4 was current for two years and is what
+# most of the world's YAML still says. A pin written from memory is a pin nobody checked.
+#
+# Dependabot checks. Weekly, grouped, so it is one pull request to read rather than six.
+#
+# The manual equivalent, if you would rather not merge robot PRs — this is what should have been
+# run when the workflows were written:
+#
+#     for r in actions/checkout docker/setup-qemu-action docker/setup-buildx-action \
+#              docker/login-action docker/metadata-action docker/build-push-action; do
+#       echo -n "$r: "
+#       git ls-remote --tags --refs https://github.com/$r |
+#         sed 's#.*refs/tags/##' | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+#     done
+#
+# NOT the Go modules, and NOT the Dockerfile. Those pins live in versions.env and core/go.mod, are
+# few and load-bearing, and were each chosen against measured behaviour — libimobiledevice's
+# userland is version-sensitive in ways a bot cannot check, and ipatool's pin carries a comment
+# explaining which upstream bug it sits on. Actions are the opposite: nobody has an opinion about
+# which minor of checkout runs, only that it is not deprecated.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci

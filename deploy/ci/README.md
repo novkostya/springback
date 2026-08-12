@@ -17,6 +17,31 @@ git push        # needs a credential with the `workflows` scope
 
 A personal access token with `repo` + `workflow`, or granting the App that permission, will do it.
 
+## The action versions are checked, not remembered
+
+Both files pin every action to a major, and those pins were wrong on the first attempt: written
+from memory they came out as `actions/checkout@v4` and each `docker/*` action one major behind,
+all targeting a Node 20 runtime GitHub has since deprecated. There was no reason for it beyond v4
+being what most workflow YAML in the world still says.
+
+[`.github/dependabot.yml`](../../.github/dependabot.yml) now watches them weekly and groups the
+updates into one pull request. To check by hand:
+
+```sh
+for r in actions/checkout docker/setup-qemu-action docker/setup-buildx-action \
+         docker/login-action docker/metadata-action docker/build-push-action; do
+  echo -n "$r: "
+  git ls-remote --tags --refs https://github.com/$r |
+    sed 's#.*refs/tags/##' | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
+done
+```
+
+The current majors were read against their release notes before being bumped. The only
+behavioural change that touches this repo is checkout's: v5 and later refuse to check out a fork's
+head for `pull_request_target` and `workflow_run` unless `allow-unsafe-pr-checkout` is set.
+`ci.yml` uses plain `pull_request`, so it is unaffected — and if that ever changes, the safe
+default is the one to keep. Everything else in the bump is Node 24 and ESM.
+
 ## What they do
 
 **`ci.yml`** — on every push to `main` and every pull request. Runs `make gates`: gofmt, `go vet`,

@@ -20,7 +20,7 @@ jobs:
   gates:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: gofmt, vet, golangci-lint, go test -race
         run: make gates
@@ -31,9 +31,9 @@ jobs:
     # glance rather than being one red X.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       # THE PINS COME FROM versions.env, WHICH IS THE POINT OF versions.env. The Makefile threads
       # every one of them in as a --build-arg; build-push-action has no idea the file exists, so
@@ -45,7 +45,7 @@ jobs:
         run: grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
 
       - name: build the production image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: deploy/Dockerfile
