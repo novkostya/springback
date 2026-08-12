@@ -263,6 +263,7 @@ body.gated > #insecure-banner { display: none; }
 /* --- detail -------------------------------------------------------------- */
 
 .detail-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.detail-head button.link { margin-left: auto; }
 .detail-head h2 { margin: 0; }
 
 .detail-hero { display: flex; align-items: center; gap: 14px; }
@@ -354,6 +355,10 @@ button.danger { background: var(--panel-2); border: 1px solid var(--line); color
 /* A NEUTRAL full-width button. Sign out had no class at all, so `button.wide` gave it a width and
    the browser gave it everything else — a 20px-tall native control stretched across the screen. */
 button.secondary { background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); }
+/* A neutral text button. `.link` alone is the danger red used by Remove and Delete, which is
+   the wrong signal for something as harmless as re-reading a page. */
+button.link.plain { color: var(--dim); }
+button.link.plain:hover { color: var(--ink); }
 button.link {
   background: none;
   border: 0;

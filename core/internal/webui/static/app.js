@@ -424,17 +424,40 @@ function renderDevice() {
   if (!udid) { root.replaceChildren(); return; }
 
   const st = deviceState.get(udid) || {};
-  const d = st.device || devices.find((x) => x.udid === udid) || { udid };
+  // THE POLLED LIST WINS ON THE FACTS. deviceState is fetched once when the page is opened and
+  // holds a snapshot; `devices` is refreshed every five seconds. Reading reachability from the
+  // snapshot meant a device unplugged while its page was open still called itself "reachable"
+  // here while the Devices list correctly said "offline" — the same device, two answers, and
+  // the stale one on the page you were looking at.
+  const d = devices.find((x) => x.udid === udid) || st.device || { udid };
   const payload = appsCache.get(udid);
 
   const back = el("button", { className: "detail-back", type: "button" }, ["‹ Devices"]);
   back.onclick = () => { if (history.length > 1) history.back(); else navigate("/"); };
+
+  // REFRESH IS A BUTTON BECAUSE NOT EVERYTHING ON THIS PAGE POLLS. The device list is re-read
+  // every five seconds and the pairing state follows it, but the app scan is deliberately not:
+  // it asks Apple about every installed app and takes half a minute, so it is fetched once and
+  // cached. Plug a device back in and the rest of the page catches up on its own while the app
+  // list stays as it was — which is what a page reload was being used to fix.
+  const refresh = el("button", { className: "link plain", type: "button", textContent: "Refresh" });
+  refresh.onclick = async () => {
+    if (refresh.disabled) return;
+    refresh.disabled = true;
+    refresh.textContent = "Refreshing…";
+    appsCache.delete(udid);
+    installedOn.delete(udid);
+    try { await refreshDevices(); } catch { /* the page says what it knows */ }
+    await loadDeviceState(udid);
+    await loadApps(udid);
+  };
 
   const head = el("div", { className: "detail-head" }, [
     el("h2", { className: "screen", textContent: deviceLabel(d) }),
     d.reachable
       ? el("span", { className: "pill live", textContent: "reachable" })
       : el("span", { className: "pill offline", textContent: "offline" }),
+    refresh,
   ]);
 
   const facts = [];
@@ -1593,7 +1616,13 @@ async function pollDevices() {
   const after = JSON.stringify(devices.map((d) => [d.udid, d.reachable, d.name]));
   // Re-render only on a real change, so an expanded device's app list is not torn down and
   // rebuilt under the reader every five seconds.
-  if (before !== after && (current === "devices" || current === "app")) rerenderCurrent();
+  if (before !== after) {
+    // A device coming or going changes more than the list: its pairing state and transport
+    // are read separately and go stale with it. Re-fetch them for the page being looked at —
+    // only on a real change, so this stays two round trips per event rather than per poll.
+    if (current === "device" && deviceUDID) loadDeviceState(deviceUDID);
+    if (current === "devices" || current === "app" || current === "device") rerenderCurrent();
+  }
 }
 
 // THE POLLERS START IN boot(), NOT HERE. Registered at module load they ran while the gate was
