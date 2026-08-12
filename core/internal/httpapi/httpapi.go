@@ -658,6 +658,9 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		// the stored passphrase for no reason and reads as data loss.
 		writeErr(w, http.StatusUnauthorized, "not_authenticated",
 			"That Apple ID's session has expired or was never completed. Go to Accounts and sign in with the same address again — the account stays where it is, nothing is lost.")
+	case errors.Is(err, tools.ErrNoMuxer):
+		writeErr(w, http.StatusServiceUnavailable, "no_muxer",
+			"No muxer is answering, so no device can be reached. Start usbmuxd or netmuxd — springback does not run one itself, deliberately. Nothing needs restarting here: devices appear on their own within a few seconds of the muxer starting.")
 	case errors.Is(err, tools.ErrDeviceUnreachable):
 		writeErr(w, http.StatusConflict, "not_reachable",
 			"The device is not answering. A sleeping iPhone drops off the network entirely — wake it and try again.")

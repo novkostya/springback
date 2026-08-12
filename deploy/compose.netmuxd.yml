@@ -25,9 +25,8 @@
 
 services:
   netmuxd:
-    # No published image exists, so this builds from upstream's own Dockerfile. It is a Rust
-    # build: expect a few minutes the first time, and nothing thereafter.
-    build: https://github.com/jkcoxson/netmuxd.git
+    # Upstream publishes this image, so there is nothing to build.
+    image: ghcr.io/jkcoxson/netmuxd:latest
     container_name: netmuxd
     restart: unless-stopped
 

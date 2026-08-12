@@ -26,7 +26,12 @@ async function api(path, opts = {}) {
     // A SESSION CAN EXPIRE UNDER A PAGE THAT IS ALREADY OPEN — after a fortnight idle, or a
     // server restart. Every screen would otherwise fill with "HTTP 401" and the user would
     // have no way to act on it. Put the gate back instead, from wherever they were.
-    if (res.status === 401 && !path.startsWith("/api/auth/")) showGate("needs_login");
+    //
+    // ASK THE SERVER WHICH GATE, rather than assuming. A 401 says "no session"; it does NOT
+    // say a password exists. This used to assume "needs_login", which on a fresh install
+    // rewrote the setup screen into a sign-in form for a password nobody had set — and then
+    // answered the button with "No password has been set yet."
+    if (res.status === 401 && !path.startsWith("/api/auth/")) regate();
     const err = new Error((body && (body.detail || body.error)) || `HTTP ${res.status}`);
     err.kind = body && body.error;
     err.status = res.status;
@@ -80,6 +85,30 @@ function applyTransport(status) {
 async function authStatus() {
   const res = await fetch("/api/auth/status");
   return res.json();
+}
+
+// regate puts the right gate back after a 401, having asked which one it should be.
+//
+// Guarded against re-entry because several requests can fail at once — the device poll and a
+// screen's own fetch — and each would otherwise start its own round trip to answer the same
+// question.
+let regating = false;
+async function regate() {
+  if (regating) return;
+  regating = true;
+  try {
+    const st = await authStatus();
+    applyTransport(st);
+    // Someone signed in while this was in flight; leaving the gate up would lock them out of
+    // a session they now hold.
+    if (st.state !== "authenticated") showGate(st.state);
+  } catch {
+    // The server is unreachable, so its state is unknowable. Sign-in is the safer of the two
+    // to offer: it cannot destroy anything, and setup would 409 if a password did exist.
+    showGate("needs_login");
+  } finally {
+    regating = false;
+  }
 }
 
 $("#gate-form").onsubmit = async (ev) => {
@@ -1555,6 +1584,10 @@ const DEVICE_POLL_MS = 5000;
 
 async function pollDevices() {
   if (document.hidden) return;
+  // NOT WHILE THE GATE IS UP. The pollers only start after signing in, but a session can expire
+  // under an open page — and then this would keep firing 401s at a login screen every five
+  // seconds, for as long as the tab stayed open.
+  if (!$("#gate").hidden) return;
   const before = JSON.stringify(devices.map((d) => [d.udid, d.reachable, d.name]));
   try { await refreshDevices(); } catch { return; }
   const after = JSON.stringify(devices.map((d) => [d.udid, d.reachable, d.name]));
@@ -1563,8 +1596,14 @@ async function pollDevices() {
   if (before !== after && (current === "devices" || current === "app")) rerenderCurrent();
 }
 
-setInterval(pollDevices, DEVICE_POLL_MS);
-document.addEventListener("visibilitychange", () => { if (!document.hidden) pollDevices(); });
+// THE POLLERS START IN boot(), NOT HERE. Registered at module load they ran while the gate was
+// still up, so on a fresh install the five-second device poll hit /api/devices, got its 401, and
+// replaced the "choose a password" screen with a sign-in form about ten seconds after the page
+// appeared. Nothing on a gated page has any business talking to an API it cannot reach.
+function startPolling() {
+  setInterval(pollDevices, DEVICE_POLL_MS);
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) pollDevices(); });
+}
 
 // boot runs once, AFTER the gate is satisfied. Everything it does needs a session, so running it
 // first would just be a screenful of 401s.
@@ -1588,6 +1627,7 @@ async function boot() {
   // link someone kept — lands where it says it will.
   await renderRoute(new URL(location.href));
   pollJobs();
+  startPolling();
 }
 
 (async () => {

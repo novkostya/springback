@@ -68,7 +68,7 @@ reasoning — or start from this:
 # compose.yml
 services:
   netmuxd:
-    build: https://github.com/jkcoxson/netmuxd.git   # no published image; a Rust build, once
+    image: ghcr.io/jkcoxson/netmuxd:latest
     container_name: netmuxd
     restart: unless-stopped
     network_mode: host          # mDNS is link-local; a bridged container never hears it

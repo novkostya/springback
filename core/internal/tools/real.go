@@ -145,9 +145,29 @@ func (r *Real) ListDeviceUDIDs(ctx context.Context) ([]string, error) {
 	usbErr := collect("-l", transportUSB)
 	netErr := collect("-n", transportNetwork)
 	if usbErr != nil && netErr != nil {
+		// BOTH TRANSPORTS FAILING USUALLY MEANS THERE IS NO MUXER, not that something is
+		// wrong with the devices — the muxer has not started yet, or is somewhere other than
+		// where springback was told to look. `idevice_id` says only "Unable to retrieve
+		// device list!", which names neither the cause nor the address it tried.
+		//
+		// It is not fatal and it self-heals: nothing here holds a connection open, so the
+		// next poll succeeds the moment a muxer appears. Measured — springback started with
+		// no muxer at all picked up four devices within three seconds of one starting, with
+		// no restart. So this is a message, not a catastrophe.
+		if strings.Contains(strings.ToLower(usbErr.Error()+netErr.Error()), "unable to retrieve device list") {
+			return nil, fmt.Errorf("%w: no muxer answering at %s", ErrNoMuxer, r.muxDescription())
+		}
 		return nil, netErr
 	}
 	return udids, nil
+}
+
+// muxDescription names where springback is looking for a muxer, for an error message.
+func (r *Real) muxDescription() string {
+	if r.MuxAddr == "" {
+		return "the default socket /var/run/usbmuxd"
+	}
+	return r.MuxAddr
 }
 
 const (

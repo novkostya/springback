@@ -168,6 +168,10 @@ var (
 	// upgrade to. Told apart from every other failure because the user's response is
 	// different: wait and try again, rather than check what you typed.
 	ErrAppleRejected = errors.New("apple rejected the request")
+	// ErrNoMuxer — no usbmuxd or netmuxd answered. Not fatal and self-healing: the next poll
+	// succeeds the moment one appears, which is why start order between the containers does
+	// not matter.
+	ErrNoMuxer = errors.New("no muxer is answering")
 )
 
 // Tools is the seam. Implementations: Real, Fake.
