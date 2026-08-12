@@ -15,6 +15,7 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"os"
 	"path/filepath"
@@ -141,6 +142,9 @@ func (d *DeviceIcons) fetch(ctx context.Context, udid string) error {
 	if err := os.MkdirAll(d.dir(udid), 0o755); err != nil {
 		return err
 	}
+	// Before working out what is missing, throw out anything already cached that turns out to be
+	// the device's generic placeholder rather than an icon.
+	d.dropCachedPlaceholders(udid)
 
 	// Only ask for what is missing. A device whose icons are all cached costs one app list and
 	// no SpringBoard connection at all.
@@ -167,10 +171,11 @@ func (d *DeviceIcons) fetch(ctx context.Context, udid string) error {
 	if err != nil {
 		return err
 	}
+	placeholder := placeholderHashes(icons)
 
 	for _, b := range want {
 		png, ok := icons[b]
-		if !ok || len(png) == 0 {
+		if !ok || len(png) == 0 || placeholder[hashBytes(png)] {
 			_ = writeFileAtomic(d.missPath(udid, b, versions[b]), nil, 0o644)
 			continue
 		}
@@ -182,6 +187,87 @@ func (d *DeviceIcons) fetch(ctx context.Context, udid string) error {
 		d.pruneOldVersions(udid, b, versions[b])
 	}
 	return nil
+}
+
+// placeholderHashes finds the icons the device handed back that are not really icons.
+//
+// SPRINGBOARD ANSWERS FOR AN APP IT HAS NO ARTWORK FOR BY SENDING A GENERIC PICTURE rather than
+// by refusing, so springback cached it and drew it — a grey patterned tile that names nothing,
+// on a list where every other row is recognisable. Reported with a screenshot.
+//
+// TWO APPS CANNOT HAVE THE SAME ICON, so an image returned for more than one bundle id in a
+// single batch is a placeholder by definition. That is the whole test, and it is deliberately not
+// a hard-coded hash: the picture differs between iOS versions and icon sizes, and a list of known
+// bad hashes would be wrong on the next device anyone tried. Measured on one iPhone: fourteen apps
+// sharing a single 11,598-byte image.
+//
+// The cost of being wrong is small in one direction and not the other. Two apps that genuinely
+// ship identical artwork would both fall back to their lettered tile — which still names the app.
+// Letting the placeholder through gives every one of them the same meaningless picture.
+//
+// It cannot catch a placeholder that arrives alone in a batch, which is the price of having no
+// fixed hash to compare against. In practice they arrive in groups.
+func placeholderHashes(icons map[string][]byte) map[string]bool {
+	owners := make(map[string]int, len(icons))
+	for _, png := range icons {
+		if len(png) > 0 {
+			owners[hashBytes(png)]++
+		}
+	}
+	out := map[string]bool{}
+	for h, n := range owners {
+		if n > 1 {
+			out[h] = true
+		}
+	}
+	return out
+}
+
+func hashBytes(b []byte) string {
+	sum := sha256.Sum256(b)
+	return string(sum[:])
+}
+
+// dropCachedPlaceholders applies the same rule to icons cached BEFORE that rule existed.
+//
+// Without it the fix would only reach devices nobody had scanned yet: a cached icon is never
+// re-examined, because the whole point of the cache is not to ask again. Runs once per warm and
+// costs a hash of each cached file — a couple of megabytes of small reads.
+//
+// They become misses rather than deletions, so the device is not asked for them again on every
+// warm. A miss is keyed by version, so an app that later has real artwork gets it at its next
+// update.
+func (d *DeviceIcons) dropCachedPlaceholders(udid string) {
+	entries, err := os.ReadDir(d.dir(udid))
+	if err != nil {
+		return
+	}
+	byHash := map[string][]string{}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".png") {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(d.dir(udid), name))
+		if err != nil || len(b) == 0 {
+			continue
+		}
+		h := hashBytes(b)
+		byHash[h] = append(byHash[h], name)
+	}
+	for _, names := range byHash {
+		if len(names) < 2 {
+			continue
+		}
+		for _, name := range names {
+			_ = os.Remove(filepath.Join(d.dir(udid), name))
+			// <bundle>@<version>.png -> the miss marker beside it.
+			stem := strings.TrimSuffix(name, ".png")
+			if i := strings.LastIndex(stem, "@"); i > 0 {
+				_ = writeFileAtomic(d.missPath(udid, stem[:i], stem[i+1:]), nil, 0o644)
+			}
+		}
+	}
 }
 
 func (d *DeviceIcons) pruneOldVersions(udid, bundleID, keep string) {

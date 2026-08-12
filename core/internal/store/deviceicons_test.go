@@ -264,3 +264,98 @@ func TestDeviceIconsWarmIsShared(t *testing.T) {
 		t.Errorf("%d concurrent Gets made %d device calls, want 1 (2 at worst)", len(apps), calls)
 	}
 }
+
+// TestDeviceReturnsTheSamePictureForSeveralApps is the reported bug: a grey patterned tile on a
+// handful of rows, identical on each, naming nothing.
+//
+// SpringBoard answers for an app it has no artwork for by sending a generic picture rather than by
+// refusing, so springback cached it and drew it. Two apps cannot have the same icon, so an image
+// returned for more than one app in a batch is a placeholder — and the right thing to show is the
+// lettered tile, which at least says which app it is.
+func TestDeviceReturnsTheSamePictureForSeveralApps(t *testing.T) {
+	placeholder := []byte("PNG-the-device-sends-when-it-has-nothing")
+	fake := &iconTools{
+		apps: []tools.InstalledApp{
+			{BundleID: "com.real.one", Version: "1"},
+			{BundleID: "com.blank.a", Version: "1"},
+			{BundleID: "com.blank.b", Version: "1"},
+			{BundleID: "com.blank.c", Version: "1"},
+		},
+		icons: map[string][]byte{
+			"com.real.one": []byte("a genuine icon"),
+			"com.blank.a":  placeholder,
+			"com.blank.b":  placeholder,
+			"com.blank.c":  placeholder,
+		},
+	}
+	d := NewDeviceIcons(t.TempDir(), fake)
+	if err := d.Warm(context.Background(), "UDID"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got, err := d.Get(context.Background(), "UDID", "com.real.one", "1"); err != nil {
+		t.Errorf("the one real icon was thrown away too: %v", err)
+	} else if string(got) != "a genuine icon" {
+		t.Errorf("got %q", got)
+	}
+	for _, b := range []string{"com.blank.a", "com.blank.b", "com.blank.c"} {
+		if _, err := d.Get(context.Background(), "UDID", b, "1"); !errors.Is(err, ErrNoDeviceIcon) {
+			t.Errorf("%s served the placeholder: %v", b, err)
+		}
+	}
+}
+
+// TestPlaceholdersAlreadyOnDiskAreDropped: the cache is never re-examined once written, so without
+// this the fix would only ever reach devices nobody had scanned before it shipped.
+func TestPlaceholdersAlreadyOnDiskAreDropped(t *testing.T) {
+	root := t.TempDir()
+	fake := &iconTools{
+		apps: []tools.InstalledApp{
+			{BundleID: "com.blank.a", Version: "1"},
+			{BundleID: "com.blank.b", Version: "1"},
+		},
+		icons: map[string][]byte{},
+	}
+	d := NewDeviceIcons(root, fake)
+
+	// Two apps cached with the same picture, as an older springback would have left them.
+	if err := os.MkdirAll(d.dir("UDID"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []string{"com.blank.a", "com.blank.b"} {
+		if err := os.WriteFile(d.path("UDID", b, "1"), []byte("the same picture"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := d.Warm(context.Background(), "UDID"); err != nil {
+		t.Fatal(err)
+	}
+	for _, b := range []string{"com.blank.a", "com.blank.b"} {
+		if _, err := d.Get(context.Background(), "UDID", b, "1"); !errors.Is(err, ErrNoDeviceIcon) {
+			t.Errorf("%s still serves the cached placeholder: %v", b, err)
+		}
+	}
+}
+
+// iconTools serves an exact app list and an exact set of icons, so a test can say precisely what
+// the device hands back — including handing the same picture to several apps.
+type iconTools struct {
+	tools.Tools
+	apps  []tools.InstalledApp
+	icons map[string][]byte
+}
+
+func (f *iconTools) ListApps(context.Context, string) ([]tools.InstalledApp, error) {
+	return f.apps, nil
+}
+
+func (f *iconTools) DeviceIcons(_ context.Context, _ string, bundleIDs []string) (map[string][]byte, error) {
+	out := map[string][]byte{}
+	for _, b := range bundleIDs {
+		if png, ok := f.icons[b]; ok {
+			out[b] = png
+		}
+	}
+	return out, nil
+}
