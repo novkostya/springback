@@ -515,10 +515,23 @@ let deviceUDID = null;
 // appFilter is the search box's text, kept out of the DOM so a re-render cannot lose it.
 let appFilter = "";
 
+// deviceStateLoading stops a failed fetch from becoming a loop. renderDevice asks for the state
+// when it has none, and a failure leaves it with none — so without this the two would call each
+// other for as long as the page stayed open.
+const deviceStateLoading = new Set();
+
 async function loadDeviceState(udid) {
+  if (deviceStateLoading.has(udid)) return;
+  deviceStateLoading.add(udid);
   try {
     deviceState.set(udid, await api(`/api/devices/${encodeURIComponent(udid)}`));
-  } catch { /* the page says what it knows */ }
+  } catch {
+    // Record the failure as an answer, so the row stops shimmering and says what it knows.
+    // Re-asking is what Refresh is for.
+    if (!deviceState.has(udid)) deviceState.set(udid, {});
+  } finally {
+    deviceStateLoading.delete(udid);
+  }
   if (current === "device") renderDevice();
 }
 
@@ -607,10 +620,18 @@ function renderDevice() {
   // touches from one month to the next the same weight as the thing the page is for — and it
   // reads as an action to take rather than a setting that already has a value. As a row it says
   // what it is, and the way to change it is beside it in small type.
-  if ((st.pair || d.pair) === "paired") facts.push(wifiFact(udid, st));
+  // KNOWING NOTHING YET IS NOT AN ANSWER, and this row said it was: while the device's own
+  // details were still being fetched the value read "could not be read", which is what springback
+  // says when it ASKED and the device would not tell it. Reported. deviceState.has is the
+  // difference between not having asked and having been refused.
+  const stLoaded = deviceState.has(udid);
+  // Ask for it if nobody has, the same way the app list does. Navigation fetches it too; this is
+  // what keeps a shimmer from outliving whatever cleared the cache.
+  if (!stLoaded) loadDeviceState(udid);
+  if (d.pair === "paired") facts.push(wifiFact(udid, st, stLoaded));
 
   const blocks = [back, head, el("dl", { className: "facts" }, facts)];
-  blocks.push(...pairingBlock(udid, st, transport));
+  blocks.push(...pairingBlock(udid, st, transport, d.pair, stLoaded));
   blocks.push(...appsBlock(udid, d, payload));
   root.replaceChildren(...blocks);
 }
@@ -619,9 +640,16 @@ function renderDevice() {
 //
 // The warning stays, but only where it matters — on the confirm, at the moment somebody is about
 // to turn it off. It was a permanent paragraph explaining a consequence that had not happened.
-function wifiFact(udid, st) {
+function wifiFact(udid, st, loaded) {
   const wifi = st.wifi_sync || "unknown";
   const dd = el("dd");
+
+  if (!loaded) {
+    // Still asking. A shimmer the width of the answer, rather than a sentence claiming the
+    // device refused to give one.
+    dd.append(el("span", { className: "sk sk-line sk-value" }));
+    return el("div", { className: "fact" }, [el("dt", { textContent: "Wi-Fi sync" }), dd]);
+  }
 
   if (wifi === "unknown") {
     dd.append(el("span", { className: "dim", textContent: "could not be read" }));
@@ -657,7 +685,7 @@ function wifiFact(udid, st) {
 // new device and everything else on this page, and it is done once. Unpairing is rare, hard to
 // undo — it needs physical access and a cable — and had exactly the same full-width weight, which
 // is an invitation to the wrong button.
-function pairingBlock(udid, st, transport) {
+function pairingBlock(udid, st, transport, listPair, loaded) {
   const out = [el("h3", { className: "sub-head", textContent: "Pairing" })];
 
   if (st.can_pair === false) {
@@ -668,10 +696,15 @@ function pairingBlock(udid, st, transport) {
       "Pair the device with whatever owns them, or mount it read-write." }));
   }
 
-  const pair = st.pair || "unknown";
+  // The LIST's answer until this page's own arrives. Both come from the pairing records, so they
+  // agree; the difference is that the list is already in hand. Falling back to "unknown" here
+  // meant the page opened by announcing "the device is not answering" about a device that had not
+  // been asked yet — alarming, and wrong a second later.
+  const pair = st.pair || listPair || "unknown";
   const label = pair === "paired" ? "Paired with this host"
     : pair === "unpaired" ? "Not paired with this host"
-    : "Pairing state unknown — the device is not answering";
+    : loaded ? "Pairing state unknown — the device is not answering"
+    : "Checking…";
   out.push(el("p", { className: "hint", textContent: label }));
 
   if (pair === "unpaired" && st.can_pair !== false) {

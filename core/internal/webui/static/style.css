@@ -683,6 +683,9 @@ body { padding-top: var(--header-h); }
 .sk-pill { width: 74px; height: 18px; border-radius: 999px; flex-shrink: 0; }
 /* The app-list skeleton: an icon tile and a status chip, matching the real row so nothing moves
    when half a minute of scanning finally lands. */
+/* A value still being fetched, sized like the answer it becomes. Inline-block so it occupies a
+   line inside a <dd> that is otherwise text. */
+.sk-value { display: inline-block; width: 84px; height: 11px; vertical-align: middle; }
 .sk-icon { width: 34px; height: 34px; border-radius: 8px; flex-shrink: 0; }
 .sk-chip { width: 62px; height: 16px; border-radius: 4px; flex-shrink: 0; }
 .sk-card .row, .sk-list .row { cursor: default; }
