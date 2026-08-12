@@ -69,6 +69,10 @@ type installedAppPlist struct {
 	// Metadata is the nested plist described above. A device or iOS version that does not
 	// return it leaves this empty, and everything still works — just without the numeric id.
 	Metadata []byte `plist:"iTunesMetadata"`
+	// DiskUsage is the installed size of the app bundle. Not the download size — the .ipa is
+	// compressed — but measured across seven archives it lands within 5-20% of it, and for a
+	// delisted app it is the only size that exists anywhere.
+	DiskUsage int64 `plist:"StaticDiskUsage"`
 }
 
 // parseAppListXML reads the plist form of the installed-app list.
@@ -89,9 +93,10 @@ func parseAppListXML(out string) []InstalledApp {
 			continue
 		}
 		app := InstalledApp{
-			BundleID: e.BundleID,
-			Version:  e.Version,
-			Name:     e.DisplayName,
+			BundleID:  e.BundleID,
+			Version:   e.Version,
+			Name:      e.DisplayName,
+			DiskUsage: e.DiskUsage,
 		}
 		if app.Name == "" {
 			app.Name = e.Name

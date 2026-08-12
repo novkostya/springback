@@ -230,7 +230,17 @@ func (f *Fake) ListApps(ctx context.Context, udid string) ([]InstalledApp, error
 	if !ok || !d.awake {
 		return nil, ErrDeviceUnreachable
 	}
-	return append([]InstalledApp(nil), f.apps[udid]...), nil
+	// The installed size is filled in here rather than written into every fixture line: it is
+	// derived from the bundle id, so it is stable across runs, and it is present for the
+	// DELISTED apps too — which is the case that has no store size and therefore the only one
+	// where this row is the whole answer.
+	out := append([]InstalledApp(nil), f.apps[udid]...)
+	for i := range out {
+		// Slightly larger than the store's number, which is the direction the real
+		// relationship runs: the .ipa is compressed, the installed bundle is not.
+		out[i].DiskUsage = fakeSize(out[i].BundleID) * 11 / 10
+	}
+	return out, nil
 }
 
 // DeviceIcons draws a flat square per app instead of asking a device for one.
@@ -472,6 +482,14 @@ func lastSegment(bundle string) string {
 	return parts[len(parts)-1]
 }
 
+// fakeSize gives each bundle a stable, plausible size so the size rows are on screen in dev.
+// Derived from the id so it never moves between runs.
+func fakeSize(bundleID string) int64 {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(bundleID))
+	return 40<<20 + int64(h.Sum32()%700)<<20
+}
+
 func (f *Fake) Lookup(ctx context.Context, bundleID, country string) StoreLookup {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -495,7 +513,7 @@ func (f *Fake) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		res.TrackID = id
 		res.TrackName = lastSegment(bundleID)
 		res.Version = f.storeVer[bundleID]
-		res.Version = f.storeVer[bundleID]
+		res.FileSize = fakeSize(bundleID)
 	}
 	return res
 }

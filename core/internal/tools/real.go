@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -223,7 +224,11 @@ func (r *Real) ListApps(ctx context.Context, udid string) ([]InstalledApp, error
 			"-a", "CFBundleShortVersionString",
 			"-a", "CFBundleDisplayName",
 			"-a", "CFBundleName",
-			"-a", "iTunesMetadata")...)
+			"-a", "iTunesMetadata",
+			// The installed size of the app bundle. Free — it rides along on a call that was
+			// already being made — and it is the ONLY size available for a delisted app,
+			// which by definition has no store record to ask.
+			"-a", "StaticDiskUsage")...)
 	if err == nil {
 		if apps := parseAppListXML(out); len(apps) > 0 {
 			return apps, nil
@@ -658,6 +663,9 @@ type lookupResponse struct {
 		Version     string `json:"version"`
 		ReleaseDate string `json:"currentVersionReleaseDate"`
 		BundleID    string `json:"bundleId"`
+		// A STRING in Apple's JSON, not a number. Decoding it as int64 fails the whole
+		// response, which would have taken the store version and the delisted verdict with it.
+		FileSizeBytes string `json:"fileSizeBytes"`
 	} `json:"results"`
 	ErrorMessage string `json:"errorMessage"`
 }
@@ -714,6 +722,9 @@ func (r *Real) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		res.TrackName = lr.Results[0].TrackName
 		res.Version = lr.Results[0].Version
 		res.ReleaseDate = lr.Results[0].ReleaseDate
+		// Unparseable is simply zero: a missing size costs one row on a detail page, and
+		// is not worth failing a lookup that decides whether an app counts as delisted.
+		res.FileSize, _ = strconv.ParseInt(lr.Results[0].FileSizeBytes, 10, 64)
 	}
 	return res
 }

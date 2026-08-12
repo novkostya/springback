@@ -71,6 +71,9 @@ type InstalledApp struct {
 	// NotPublic marks a B2B custom app or a factory install: never a public listing, so its
 	// absence from every store is not evidence of anything.
 	NotPublic bool `json:"not_public,omitempty"`
+	// DiskUsage is what the app occupies ON THE DEVICE, in bytes. Zero when the device did
+	// not report it.
+	DiskUsage int64 `json:"disk_usage,omitempty"`
 }
 
 // StoreLookup is one storefront's answer for one bundle id.
@@ -91,7 +94,10 @@ type StoreLookup struct {
 	// from another storefront. Checked on a device: it can — the app appears in Updates and
 	// iOS prompts for the owning Apple ID's password. Updating from springback avoids that
 	// prompt; it is not the only route.)
-	Version     string
+	Version string
+	// FileSize is the download size the store reports, in bytes. Zero when unknown — and it
+	// is always zero for a delisted app, which has no store record to ask.
+	FileSize    int64
 	ReleaseDate string
 	Err         error
 }

@@ -624,6 +624,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 		"checked": res.Checked,
 		"status":  res.Status,
 		"version": res.Version,
+		"size":    res.FileSize,
 		"errors":  res.Errors,
 	})
 }

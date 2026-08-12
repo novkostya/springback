@@ -79,9 +79,12 @@ type Result struct {
 	// receipt carries the id whether or not the listing still exists. See tools/applist.go.
 	TrackID int64 `json:"track_id,omitempty"`
 	// Version is what the store sells RIGHT NOW, which is how a stale library copy is spotted.
-	Version string   `json:"version,omitempty"`
-	Checked []string `json:"checked"`
-	Errors  []string `json:"errors,omitempty"`
+	Version string `json:"version,omitempty"`
+	// FileSize is the download size the store reports, in bytes. Zero for a delisted app —
+	// there is no store record to carry one.
+	FileSize int64    `json:"file_size,omitempty"`
+	Checked  []string `json:"checked"`
+	Errors   []string `json:"errors,omitempty"`
 }
 
 // appleRegion maps an Apple part-number region code onto an iTunes storefront.
@@ -317,6 +320,7 @@ func (r *Resolver) query(ctx context.Context, bundleID string, fronts []string) 
 			if res.TrackID == 0 {
 				res.TrackID = l.TrackID
 				res.Version = l.Version
+				res.FileSize = l.FileSize
 			}
 		}
 	}

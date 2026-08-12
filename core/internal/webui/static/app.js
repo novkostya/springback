@@ -621,6 +621,27 @@ function renderAppDetail() {
   fact("Developer", (a && a.artist) || (item && item.artist));
   fact("Bought with", a && a.owner_apple_id);
   fact("Storefront", a && a.storefront && a.storefront.toUpperCase());
+
+  // TWO SIZES, BECAUSE THEY ARE DIFFERENT FACTS AND EITHER CAN BE MISSING.
+  //
+  //   Download   — what the store says the .ipa weighs. Exact, and the number that answers
+  //                "how long will this take". Does not exist for a delisted app: there is no
+  //                store record left to carry one, which is the whole premise of this tool.
+  //   On device  — what the installed app occupies. Available for anything installed,
+  //                INCLUDING delisted apps, so it is the only estimate for exactly the case
+  //                where the store has nothing to say.
+  //
+  // Not the same number, and not presented as one. Measured across seven real archives, the
+  // .ipa came out at 79-95% of the installed size — close enough to plan a download around,
+  // far enough that quoting one as the other would be wrong.
+  // fmtSize renders 0 as an em dash, which fact() would happily show as a row saying nothing —
+  // so the number is tested before it is formatted, not after.
+  const lookedUp = a && storeInfo.get(a.bundle_id);
+  const storeSize = (a && a.store_size) || (lookedUp && lookedUp.size) || 0;
+  const onDevice = (a && a.disk_usage) || 0;
+  if (storeSize > 0) fact("Download", fmtSize(storeSize));
+  if (onDevice > 0) fact("On device", fmtSize(onDevice));
+
   if (item) {
     fact("Downloaded", fmtDate(item.downloaded_at));
     fact("Size", fmtSize(item.size));
