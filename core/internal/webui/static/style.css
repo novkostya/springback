@@ -15,6 +15,12 @@
   /* 44px is Apple's minimum comfortable touch target, and this is a phone-first UI. */
   --tap: 44px;
   --header-h: 113px;
+  /* THE READABLE COLUMN. One measure for the whole page: the header, the tabs, the banners,
+     the job strip and the content all line up on it. Without this the bar spanned the window
+     while the content sat in a 760px column, so on a wide screen the title was hundreds of
+     pixels left of the heading underneath it. */
+  --measure: 760px;
+  --gutter: 16px;
 }
 
 * { box-sizing: border-box; }
@@ -48,7 +54,10 @@ body {
 .row-sub, .fact dd, .job-line, .job-detail { overflow-wrap: anywhere; }
 
 header {
-  padding: 14px 16px 0;
+  /* NO SIDE PADDING ON THE BAR ITSELF. The bar spans the window — its background and its rule
+     should reach both edges — while its CONTENTS sit in the column, which is what .titlebar and
+     nav do below. */
+  padding: 14px 0 0;
   border-bottom: 1px solid var(--line);
   position: fixed;
   left: 0;
@@ -64,6 +73,7 @@ header {
    its own layer can be composited with the page's new scroll offset applied but its sticky
    adjustment not yet recomputed — so it is drawn at its static position, hundreds of pixels
    above the viewport, and simply is not there. Sticky and forced layer promotion do not mix. */
+.titlebar, nav { max-width: var(--measure); margin-left: auto; margin-right: auto; padding: 0 var(--gutter); }
 .titlebar { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 0; font-size: 18px; letter-spacing: -0.01em; }
 .tagline { margin: 1px 0 10px; color: var(--dim); font-size: 12px; }
@@ -84,9 +94,16 @@ nav button {
 }
 nav button.active { color: var(--ink); border-bottom-color: var(--accent); }
 
-main { padding: 16px; max-width: 760px; margin: 0 auto; }
+main { padding: var(--gutter); max-width: var(--measure); margin: 0 auto; }
 
-.banner { margin: 10px 16px 0; padding: 10px 12px; border-radius: var(--radius); font-size: 13px; }
+.banner {
+  max-width: calc(var(--measure) - var(--gutter) * 2);
+  width: calc(100% - var(--gutter) * 2);
+  margin: 10px auto 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
 .banner.warn { background: #3a2c14; border: 1px solid #6b4f1d; }
 
 /* --- the gate ------------------------------------------------------------ */
@@ -127,16 +144,17 @@ body.gated > #insecure-banner { display: none; }
    stacked sticky boxes to resolve, and the header flickered for a frame on the way back.
    Removed from the layout entirely when there is nothing in it. */
 #jobs:empty { display: none; }
-#jobs { position: sticky; top: var(--header-h); z-index: 4; padding: 10px 16px 0; }
+#jobs { position: sticky; top: var(--header-h); z-index: 4; padding: 10px 0 0; }
 .job {
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: var(--radius);
   padding: 10px 12px;
-  margin-bottom: 8px;
-  max-width: 760px;
-  margin-left: auto;
-  margin-right: auto;
+  margin: 0 auto 8px;
+  /* The same box the banners get: the measure less both gutters, so its edges line up with the
+     content underneath rather than sitting 16px proud of it. */
+  max-width: calc(var(--measure) - var(--gutter) * 2);
+  width: calc(100% - var(--gutter) * 2);
 }
 .job-line { display: flex; justify-content: space-between; gap: 10px; font-size: 13px; }
 .job-pct { color: var(--accent); font-variant-numeric: tabular-nums; white-space: nowrap; }
