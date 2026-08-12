@@ -522,9 +522,13 @@ function appsBlock(udid, d, payload) {
 
   const { apps, storefronts, total, delisted, unknown } = payload;
   const summary = el("div", { className: "summary" });
+  // "on novkostya-iphone", not "on this novkostya-iphone" — the name is already specific, so
+  // the demonstrative just gets in the way. It comes back only for a device with no name to
+  // use, where "on device" would read like a dropped word.
+  const where = d.name ? d.name : "this device";
   summary.append(el("p", { className: "summary-line" }, delisted > 0 ? [
     el("strong", { textContent: `${delisted} of ${total} apps` }),
-    ` on this ${d.name || "device"} ${delisted === 1 ? "is" : "are"} no longer in the App Store.`,
+    ` on ${where} ${delisted === 1 ? "is" : "are"} no longer in the App Store.`,
   ] : [`All ${total} apps here are still in an App Store somewhere.`]));
   summary.append(el("p", {
     className: "sub",
