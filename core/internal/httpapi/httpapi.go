@@ -708,6 +708,17 @@ func (s *Server) fail(w http.ResponseWriter, err error) {
 		writeErr(w, http.StatusBadGateway, "install_incomplete", err.Error())
 	case errors.Is(err, tools.ErrNeeds2FA):
 		writeErr(w, http.StatusConflict, "needs_2fa", "A verification code is required.")
+	case errors.Is(err, tools.ErrAppleUnreadable):
+		writeErr(w, http.StatusBadGateway, "apple_unreadable",
+			"Apple's answer was not a sign-in result at all — no reason for refusing, and no session. "+
+				"Two things look like this. Either the connection to Apple is being blocked or "+
+				"intercepted on the way (reported on some ISPs, and a VPN in front of springback fixed "+
+				"it both times), or Apple is refusing the unofficial client, which it does in waves. "+
+				"To tell them apart, run this on the box springback is on:\n\n"+
+				`curl -si -m 20 -X POST "https://buy.itunes.apple.com/WebObjects/MZFinance.woa/wa/authenticate?guid=000000000000" --data "appleId=nobody@example.com&password=x&attempt=4&createSession=true"`+
+				"\n\nA healthy path answers HTTP 200 with MZFinance.BadLogin — that is Apple correctly "+
+				"rejecting an account that does not exist, and it means the problem is elsewhere. "+
+				"A timeout, a reset, or an HTML page instead of XML means the path is the problem.")
 	case errors.Is(err, tools.ErrAppleRejected):
 		// 502: the failure is upstream, not in the request. Saying so matters, because the
 		// natural reading of a failed sign-in is "I typed something wrong" and the user will

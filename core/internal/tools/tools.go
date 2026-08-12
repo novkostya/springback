@@ -190,6 +190,16 @@ var (
 	// upgrade to. Told apart from every other failure because the user's response is
 	// different: wait and try again, rather than check what you typed.
 	ErrAppleRejected = errors.New("apple rejected the request")
+	// ErrAppleUnreadable — Apple's reply was not a sign-in result at all: no failure reason and
+	// no token. Told apart from ErrAppleRejected because the likely causes are different and so
+	// is what to do about them.
+	//
+	// The one that is easy to miss: THE CONNECTION TO APPLE NEVER ARRIVED INTACT. Reported by
+	// two people on the same ISP, both fixed by putting a VPN in front of it — a blocked or
+	// intercepted path produces a reply that parses as nothing, which is exactly this. The other
+	// cause is Apple refusing the unofficial client. springback cannot tell them apart from the
+	// output, so the message says both and gives the one command that decides it.
+	ErrAppleUnreadable = errors.New("apple's reply was not a sign-in result")
 	// ErrNoMuxer — no usbmuxd or netmuxd answered. Not fatal and self-healing: the next poll
 	// succeeds the moment one appears, which is why start order between the containers does
 	// not matter.

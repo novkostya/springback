@@ -86,3 +86,23 @@ func TestClassifyAppleRejection(t *testing.T) {
 		t.Errorf("2FA prompt was swallowed by the Apple catch-all: %v", got)
 	}
 }
+
+// TestSomethingWentWrongIsClassified: ipatool's catch-all used to reach the screen verbatim —
+// `ipatool: exit status 1: 10:47AM INF enter password: ... error="something went wrong"` — which
+// tells the reader nothing and looks like a crash. It has one meaning, and the UI now explains it.
+func TestSomethingWentWrongIsClassified(t *testing.T) {
+	out := `10:47AM INF enter password: 10:48AM ERR error="something went wrong" success=false`
+	if got := classify(out, nil); !errors.Is(got, ErrAppleUnreadable) {
+		t.Errorf("classify = %v, want ErrAppleUnreadable", got)
+	}
+	// And it must not swallow the cases that have a real answer of their own.
+	for _, s := range []string{
+		"license not found",
+		"App not found",
+		"2FA code is required",
+	} {
+		if got := classify(s, nil); errors.Is(got, ErrAppleUnreadable) {
+			t.Errorf("classify(%q) was swallowed by the catch-all", s)
+		}
+	}
+}

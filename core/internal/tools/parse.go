@@ -193,6 +193,15 @@ func classify(out string, fallback error) error {
 			return fmt.Errorf("%w: Apple answered HTTP %s", ErrAppleRejected, code)
 		}
 		return ErrAppleRejected
+	// ipatool's own catch-all, and it used to fall through to here as a raw tool dump on
+	// screen: `ipatool: exit status 1: 10:47AM INF enter password: 10:48AM ERR
+	// error="something went wrong" success=false`. Reported with a screenshot.
+	//
+	// It means one specific thing, from ipatool's source (appstore_login.go): the reply carried
+	// no failureType AND no password token — so it was not a sign-in result at all, right or
+	// wrong. A wrong password does not land here; that has a failureType.
+	case strings.Contains(l, "something went wrong"):
+		return ErrAppleUnreadable
 	}
 	return fallback
 }
