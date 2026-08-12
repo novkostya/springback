@@ -1,17 +1,15 @@
-# springback — the ordinary way to run it.
+# springback, using a muxer that already runs on the host.
 #
-# Copy this next to a directory you are happy to keep app archives in, and `docker compose up -d`.
-# The first page it serves asks you to choose a password; there is nothing to configure first.
+# `docker compose up -d`, then open http://<the box>:8971 and choose a password.
 #
-# THE ONE THING THAT IS NOT OBVIOUS: springback does not talk to iPhones by itself. It shells out
-# to Apple's userland (libimobiledevice), and that needs a *muxer* — `usbmuxd` — which owns the
-# USB bus and must run on the HOST, not in here. Two of them fight over the same devices, so this
-# image deliberately does not contain one. On a Linux box:
+# springback talks to iPhones through a *muxer* — usbmuxd — which owns the USB bus and must run on
+# the host. It is not in this image on purpose: only one muxer may own the bus, and a second one
+# fights the first.
 #
 #     apt install usbmuxd        # or: pacman -S usbmuxd, apk add usbmuxd
 #     systemctl enable --now usbmuxd
 #
-# Then the socket below is all springback needs.
+# Devices on the cable only. For Wi-Fi, use compose.netmuxd.yml instead.
 
 services:
   springback:
@@ -21,52 +19,19 @@ services:
     ports:
       - "8971:8971"
     volumes:
-      # Downloaded .ipa files, one directory per numeric App Store id. This is the one that
-      # grows: apps are 100 MB to 1 GB each.
+      # The archives, one directory per App Store id. This is the one that grows: apps are
+      # 100 MB to 1 GB each.
       - ./data/library:/library
-      # Apple ID sessions, and the password you set on first run. Back this up; treat it the
+      # Apple ID sessions and the password you set on first run. Back this up, and treat it the
       # way you would treat a password manager's vault.
       - ./data/accounts:/accounts
-
-      # The muxer's socket. This is how the container reaches devices plugged into the host.
+      # The muxer's socket — how the container reaches devices plugged into the host.
       - /var/run/usbmuxd:/var/run/usbmuxd
-
-      # Pairing records — the proof that a device trusts this computer. READ-WRITE, because
-      # springback pairs devices itself; see the note at the bottom if something else on the box
-      # already owns them.
+      # Pairing records: the proof that a device trusts this computer. Read-write, because
+      # springback pairs devices itself. If something else on this box already owns them, mount
+      # read-only (`:ro`) and let it keep ownership — springback will still read them to know
+      # which devices exist, and will explain why its pairing controls are unavailable.
       - /var/lib/lockdown:/var/lib/lockdown
 
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-# Variations
-#
-# TLS. springback works over plain http and says so on every screen, because a session cookie
-# marked Secure is silently discarded over http and you would get a login that fails with no
-# error. On anything but a network you trust, put it behind a reverse proxy that terminates TLS
-# and forwards `X-Forwarded-Proto: https` — springback reads that header, marks the cookie
-# Secure, and drops the warning banner. Caddy needs one line:
-#
-#     springback.example.com {
-#         reverse_proxy localhost:8971
-#     }
-#
-# WI-FI DEVICES. Plain usbmuxd only sees devices on the cable. To reach a device over Wi-Fi you
-# need something that speaks the mux protocol over the network — netmuxd is the usual answer —
-# and then you point springback at it instead of the socket:
-#
-#     network_mode: host          # netmuxd binds 127.0.0.1, which a bridged container cannot reach
-#     environment:
-#       USBMUXD_SOCKET_ADDRESS: "127.0.0.1:27015"
-#
-# and drop the /var/run/usbmuxd mount. Pairing still needs the cable once; after that Wi-Fi is
-# enough, provided the device's Wi-Fi sync flag is on — springback has a switch for it on each
-# device's page.
-#
-# SHARING A HOST WITH SOMETHING ELSE THAT OWNS THE DEVICES. If another tool on this box already
-# pairs and manages these devices, let it keep ownership: mount the pairing records READ-ONLY
-#
-#     - /var/lib/lockdown:/var/lib/lockdown:ro
-#
-# and springback will read them to know which devices exist while they are asleep, show the
-# pairing controls as unavailable, and explain why. Losing a pairing record means re-pairing by
-# hand with physical access to each device, so it is not a thing to have two writers for.
-# ─────────────────────────────────────────────────────────────────────────────────────────────
+# TLS: springback works over plain http and says so on every screen. Put it behind a reverse proxy
+# that terminates TLS and forwards X-Forwarded-Proto — see the README.

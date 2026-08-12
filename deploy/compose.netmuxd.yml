@@ -1,134 +1,66 @@
 # springback + netmuxd — everything in containers, and Wi-Fi devices work.
 #
-# The other compose file needs `usbmuxd` installed on the host and only ever sees devices on the
-# cable. This one runs the muxer in a container too, and netmuxd speaks both transports: USB, and
-# Wi-Fi devices found over mDNS. Nothing is installed on the host.
+# `docker compose up -d`, then open http://<the box>:8971 and choose a password.
 #
-# Exactly one of these containers needs the host's network and its USB bus; the other is an
-# ordinary web app that only needs to reach it, over a unix socket in a shared volume:
+# The other compose file needs usbmuxd on the host and only sees devices on the cable. This runs
+# the muxer in a container too, and netmuxd speaks both transports: USB, and Wi-Fi devices found
+# over mDNS. Nothing is installed on the host.
 #
-#   netmuxd     host network (mDNS is link-local and cannot cross a bridge) + the USB bus
-#   springback  the default network, one published port, and the socket
+# Use this only if nothing else on the box is already a muxer — `ss -lx | grep usbmux` should come
+# back empty. Two muxers fight over the USB bus.
 #
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-# THE ORDER OF OPERATIONS THAT ACTUALLY MATTERS
+# PAIR OVER THE CABLE ONCE, FIRST. netmuxd only serves a Wi-Fi device it holds a pairing record
+# for: an mDNS advertisement carries no udid, so it matches the advertisement against the records
+# in --plist-storage. With none it discovers every phone on the network and serves nothing.
 #
-# netmuxd only serves a Wi-Fi device it holds a PAIRING RECORD for. That is not a limitation
-# anyone chose: an mDNS advertisement carries no udid, so netmuxd matches the advertisement's
-# authTags against the records in --plist-storage to work out which device it is seeing. With an
-# empty directory it discovers every phone on the network and serves none of them — measured, and
-# it logs "No paired device matched service ...".
-#
-# So: plug the device in over USB once and pair it. That writes the record into ./data/lockdown,
-# both containers see it, and from then on Wi-Fi is enough.
-#
-# ─────────────────────────────────────────────────────────────────────────────────────────────
-# NETMUXD PAIRS BY ITSELF, AND YOU SHOULD KNOW THAT BEFORE YOU PLUG SOMETHING IN
-#
-# Plug in a device it has no pairing record for and netmuxd calls lockdown.pair() immediately —
-# the phone shows "Trust This Computer?" without anyone having asked for it. Read from the
-# source of the pinned version (daemon/mod.rs: "No valid pairing record for …; starting pair
-# flow"), and there is no flag to turn it off: the complete option list is --host, --port,
-# --socket-path, --plist-storage, --upstream-usbmuxd, --disable-{usb,mdns,unix,heartbeat}.
-#
-# It is not dangerous on a box you own — trust still requires someone to tap the phone, and
-# pairing is something you were going to do anyway. But it does mean springback's own Pair
-# button is not the only thing that can start a pairing, which is worth knowing if you plug in
-# somebody else's phone to charge it.
-#
-# --disable-usb stops it, at the cost of USB entirely — which is the other compose file's
-# arrangement: usbmuxd on the host does NOT pair on its own, so there the Pair button is the
-# only thing that ever raises a trust prompt.
-# ─────────────────────────────────────────────────────────────────────────────────────────────
+# NETMUXD PAIRS BY ITSELF. Plug in a device it has no record for and the phone shows "Trust This
+# Computer?" without anyone asking for it. There is no flag to disable it. Nothing happens unless
+# someone taps the phone — but springback's own Pair button is not the only thing that can raise
+# that prompt. If that matters, use compose.yml with usbmuxd, which never pairs on its own.
 
 services:
   netmuxd:
-    # Upstream publishes this image, so there is nothing to build.
     image: ghcr.io/jkcoxson/netmuxd:latest
     container_name: netmuxd
     restart: unless-stopped
 
-    # HOST NETWORK IS NOT OPTIONAL HERE. Device discovery is mDNS, which is multicast on the
-    # local link — a bridged container is on a different link and hears none of it.
+    # HOST NETWORK IS REQUIRED: device discovery is mDNS, which is multicast on the local link,
+    # and a bridged container is on a different link.
     network_mode: host
 
-    # USB. The bind mount exposes the device nodes; the cgroup rule is what actually permits
-    # reading and writing them (189 is the USB device major).
+    # USB. The bind mount exposes the device nodes; the cgroup rule permits reading and writing
+    # them (189 is the USB major). This is the whole requirement — `privileged: true` is the usual
+    # advice and grants far more than this needs.
     #
-    # UNPRIVILEGED IS ENOUGH. `privileged: true` is the usual advice for USB in a container and
-    # grants far more than this needs; these two lines are the whole requirement.
-    #
-    # RESTART netmuxd AFTER PLUGGING A DEVICE IN, and the reason is not the one you would guess.
-    #
-    #     docker compose restart netmuxd
-    #
-    # It is NOT that the device node is invisible. Docker's bind mount of /dev/bus/usb does
-    # propagate nodes created later, and the wildcard rule above already covers a minor that did
-    # not exist at start — measured with a phone on a cable: the node appeared inside the
-    # container unprompted and netmuxd logged the device's serial immediately.
-    #
-    # What actually happens is that netmuxd tries claim_interface about five times over five
-    # seconds and then gives up FOR GOOD. If anything else holds the interface at that moment —
-    # a host usbmuxd, another container's muxer — netmuxd never tries again. Measured: an
-    # interface freed three minutes later was still unclaimed until the container was restarted.
-    #
-    # So this matters once per device, and mostly when something else was holding the bus.
+    # If a device you have just plugged in does not appear, restart this container: netmuxd tries
+    # to claim the USB interface for about five seconds and then gives up for good.
     device_cgroup_rules:
       - "c 189:* rmw"
     volumes:
       - /dev/bus/usb:/dev/bus/usb
-      # The pairing records, shared with springback: springback writes one when you pair,
-      # netmuxd reads it to recognise that device over Wi-Fi afterwards.
+
+      # Pairing records, shared with springback: springback writes one when you pair, netmuxd
+      # reads it to recognise that device over Wi-Fi afterwards.
       - ./data/lockdown:/var/lib/lockdown
 
-      # HIDE THE HOST IDENTITY FILE FROM netmuxd, OR WI-FI WORKS ONLY BY LUCK.
-      #
-      # /var/lib/lockdown holds one file per paired device AND SystemConfiguration.plist, which
-      # is not a pairing record at all — it is this computer's own identity (its SystemBUID).
-      # netmuxd scans every *.plist in --plist-storage looking for the one that matches an mDNS
-      # advertisement, and SystemConfiguration.plist MATCHES: the advert carries the paired
-      # host's SystemBUID, which is exactly what that file contains. netmuxd then takes the
-      # filename as the udid, decides it is looking at a device called "SystemConfiguration",
-      # and stops. The real record is never tried and the phone is never added.
-      #
-      # It depends on which file the directory scan reaches first, so it works until it doesn't:
-      # measured on the same box within one hour, Wi-Fi working at 08:33
-      #
-      #     TXT record matched UDID 00008140-000269063E88801C ... Adding network device
-      #
-      # and silently not working at 08:36, after the device's record was deleted and rewritten
-      # (which changed the directory order)
-      #
-      #     TXT record matched UDID SystemConfiguration
-      #
-      # with no error anywhere and the device simply absent over Wi-Fi. Verified by running a
-      # second netmuxd against the same records with this one file removed: it matched the right
-      # record in one second and added the device.
-      #
-      # netmuxd does not need this file — only springback does, and springback has its own mount
-      # of the same directory, which this does not touch.
-      #
-      # /dev/null, and the two tidier-looking alternatives both fail: a path that does not exist
-      # yet is created by Docker as a DIRECTORY, and a directory cannot be mounted over the file
-      # that is already there ("Are you trying to mount a directory onto a file?"). An empty file
-      # would work but would have to be created before the first `up`, which is a setup step in a
-      # file whose whole point is that there is none. /dev/null reads as empty, always exists,
-      # and needs nothing. netmuxd logs one parse warning for it and moves on to the real record.
+      # HIDES THIS COMPUTER'S OWN IDENTITY FILE, AND WI-FI DEPENDS ON IT. /var/lib/lockdown holds
+      # one file that is not a pairing record — SystemConfiguration.plist — and netmuxd matches it
+      # against mDNS advertisements anyway, then takes the filename for a udid and stops without
+      # trying the real record. Which file it reaches first is down to directory order, so without
+      # this line Wi-Fi works only by luck, silently. netmuxd does not need the file; springback
+      # does, and has its own mount of the same directory.
       - /dev/null:/var/lib/lockdown/SystemConfiguration.plist
 
       - mux:/run/mux
 
-    # A muxer is otherwise completely silent, and `docker logs netmuxd` is the first place to
-    # look when a device does not appear. At `info` it names every device it adds and says
-    # "No paired device matched service ..." for each one it discovers and cannot identify —
-    # which is the single most useful line in this whole file when something is wrong.
+    # A muxer is otherwise silent, and `docker logs netmuxd` is the first place to look when a
+    # device does not appear.
     environment:
       RUST_LOG: info
 
-    # NO --host AND NO --port, so netmuxd listens on a unix socket and nothing else. A muxer has
-    # no authentication in front of it: anything that can reach it can talk to every device it
-    # serves. A socket in a shared volume is reachable by exactly the containers that mount it,
-    # which is the smallest surface that works.
+    # No --host and no --port, so netmuxd listens on a unix socket and nothing else. A muxer has
+    # no authentication in front of it: anything that reaches it can talk to every device it
+    # serves. A socket in a shared volume is reachable by exactly the containers that mount it.
     command:
       - "--socket-path"
       - "/run/mux/usbmuxd"
@@ -143,13 +75,10 @@ services:
     ports:
       - "8971:8971"
 
-    # THE DIRECTORY IS MOUNTED, NOT THE SOCKET FILE — and that is a bug fix, not a style. Bind
-    # mounting `mux/usbmuxd` straight onto /var/run/usbmuxd would need libimobiledevice's default
-    # path and no environment variable at all, which is tidier and was measured to work. But if
-    # springback starts before netmuxd has bound, Docker creates a DIRECTORY where the socket
-    # should be, and netmuxd can then never bind there. `depends_on` does not help: it waits for
-    # the container to start, not for the socket to exist. Mounting the directory has no such
-    # race, because the directory is always there.
+    # THE DIRECTORY IS MOUNTED, NOT THE SOCKET FILE. Bind mounting the socket itself onto
+    # /var/run/usbmuxd would need no environment variable at all — but if springback starts before
+    # netmuxd has bound, Docker creates a DIRECTORY where the socket should be and netmuxd can
+    # never bind there. Mounting the directory has no such race.
     environment:
       USBMUXD_SOCKET_ADDRESS: "UNIX:/run/mux/usbmuxd"
 
