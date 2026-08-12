@@ -1991,8 +1991,15 @@ $("#signin").addEventListener("submit", async (ev) => {
       await api("/api/accounts", { method: "POST", body: JSON.stringify({ email, password }) });
     }
     toast(`Signed in as ${email}.`);
-    // The sign-in succeeded, so the password has no further use and should not sit in the DOM.
+    // THE WHOLE FORM GOES, NOT JUST THE PASSWORD. The account is in the list above by the time
+    // this returns, and an address still sitting in a box headed "Add an Apple ID" reads as an
+    // attempt that has not landed — reported against a sign-in that had in fact succeeded, with
+    // the manager's autofill highlight still on the field to make it look live.
     resetSignin();
+    emailEl.value = "";
+    // The next attempt is a new one: whether ITS password was typed or filled has not been
+    // observed yet, and a flag left over from this one would misjudge it.
+    delete passEl.dataset.typed;
     await refreshAccounts();
     renderAccountsList();
   } catch (e) {
