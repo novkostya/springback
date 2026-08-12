@@ -1,0 +1,102 @@
+# springback + netmuxd — everything in containers, and Wi-Fi devices work.
+#
+# The other compose file needs `usbmuxd` installed on the host and only ever sees devices on the
+# cable. This one runs the muxer in a container too, and netmuxd speaks both transports: USB, and
+# Wi-Fi devices found over mDNS. Nothing is installed on the host.
+#
+# The split is not arbitrary. Exactly one of these containers needs the host's network and its USB
+# bus; the other is an ordinary web app that only needs to reach it:
+#
+#   netmuxd     host network (mDNS is link-local and cannot cross a bridge) + /dev/bus/usb
+#   springback  the default network, one published port, and a TCP address for the muxer
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# THE ORDER OF OPERATIONS THAT ACTUALLY MATTERS
+#
+# netmuxd only serves a Wi-Fi device it holds a PAIRING RECORD for. That is not a limitation
+# anyone chose: an mDNS advertisement carries no udid, so netmuxd matches the advertisement's
+# authTags against the records in --plist-storage to work out which device it is seeing. With an
+# empty directory it discovers every phone on the network and serves none of them — measured, and
+# it logs "No paired device matched service ...".
+#
+# So: plug the device in over USB once and pair it. That writes the record, both containers see
+# it through the shared mount, and from then on Wi-Fi is enough.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+
+services:
+  netmuxd:
+    # No published image exists, so this builds from upstream's own Dockerfile. It is a Rust
+    # build: expect a few minutes the first time, and nothing thereafter.
+    build: https://github.com/jkcoxson/netmuxd.git
+    container_name: netmuxd
+    restart: unless-stopped
+
+    # HOST NETWORK IS NOT OPTIONAL HERE. Device discovery is mDNS, which is multicast on the
+    # local link — a bridged container is on a different link and hears none of it.
+    network_mode: host
+
+    # USB. The bind mount is what lets netmuxd talk to a device on the cable.
+    #
+    # NOT VERIFIED HERE, and worth saying plainly: everything else in this file was measured, but
+    # the machine it was measured on had no device on USB. Two things to know if it misbehaves —
+    # a device plugged in AFTER the container starts may not appear inside it, because a bind
+    # mount does not propagate new device nodes unless it is shared; and some hosts need
+    # `privileged: true` for raw USB access. If a cabled device does not show up, try:
+    #   privileged: true
+    #   volumes: [/dev:/dev]
+    volumes:
+      - /dev/bus/usb:/dev/bus/usb
+      # The pairing records, READ-WRITE, shared with springback below — springback writes them
+      # when you pair, netmuxd reads them to recognise a device over Wi-Fi.
+      - ./data/lockdown:/var/lib/lockdown
+
+    command:
+      - "--host"
+      - "172.17.0.1"         # the docker bridge, NOT loopback — see the note at the bottom
+      - "--port"
+      - "27015"
+      - "--plist-storage"
+      - "/var/lib/lockdown"
+
+  springback:
+    image: ghcr.io/novkostya/springback:latest
+    container_name: springback
+    restart: unless-stopped
+    depends_on: [netmuxd]
+    ports:
+      - "8971:8971"
+
+    # host.docker.internal resolves to the host from inside a container. `host-gateway` is what
+    # makes that work on Linux, and it is needed even on a compose-managed network — measured on
+    # Docker 29 / Debian 13, where a container on the project network reached the host this way.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    environment:
+      USBMUXD_SOCKET_ADDRESS: "host.docker.internal:27015"
+
+    volumes:
+      - ./data/library:/library      # the archives — this is the one that grows
+      - ./data/accounts:/accounts    # Apple ID sessions and your springback password
+      - ./data/lockdown:/var/lib/lockdown
+
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# Why `--host 172.17.0.1` and not something more obvious
+#
+# There is no password in front of a muxer. Anything that can reach that port can talk to every
+# device it serves, so where it listens is a real decision. All three candidates were measured
+# from a springback container on a compose-managed network:
+#
+#   --host 127.0.0.1     listener 127.0.0.1:27015     UNREACHABLE from the container
+#   --host 172.17.0.1    listener 172.17.0.1:27015    reachable, and invisible to the LAN
+#   --host 0.0.0.0       listener 0.0.0.0:27015       reachable, and offered to the whole LAN
+#
+# So loopback — the instinctive safe answer — simply does not work: a container reaches the host
+# by its bridge address, not through the host's loopback. 172.17.0.1 is the docker0 bridge, which
+# is exactly the address `host.docker.internal:host-gateway` resolves to, and it is not routable
+# from anywhere off the machine.
+#
+# If your Docker uses a different bridge subnet, match this to whatever
+# `docker network inspect bridge` reports as its gateway. Binding 0.0.0.0 will also work and will
+# also hand your devices to anyone on the network; if you do that, firewall the port.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
