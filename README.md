@@ -133,6 +133,8 @@ services:
     volumes:
       - /dev/bus/usb:/dev/bus/usb
       - ./data/lockdown:/var/lib/lockdown
+      # Not optional — see "Wi-Fi devices" below. Without it Wi-Fi works only by luck.
+      - /dev/null:/var/lib/lockdown/SystemConfiguration.plist
       - mux:/run/mux
     command: ["--socket-path", "/run/mux/usbmuxd", "--plist-storage", "/var/lib/lockdown"]
 
@@ -176,10 +178,26 @@ anything else is holding the bus at that moment (a host `usbmuxd`, another conta
 never tries again, even after the interface is free. Look for `interface is busy (errno 16)` in
 `docker logs netmuxd`. Stop whatever else owns the bus, then restart netmuxd.
 
-*Wi-Fi devices only appear once they are paired.* An mDNS advertisement carries no serial number,
-so netmuxd matches it against the pairing records it holds to work out which phone it is looking
-at. With no record it discovers every device on the network and serves none of them — it logs
-`No paired device matched service …`. Pair over the cable once; Wi-Fi is enough after that.
+*Wi-Fi devices only appear once they are paired* — and only if netmuxd cannot see this computer's
+own identity file. An mDNS advertisement carries no serial number, so netmuxd matches it against
+the `.plist` files in its `--plist-storage` to work out which phone it is looking at. Pair over the
+cable once and Wi-Fi is enough after that.
+
+The catch is that `/var/lib/lockdown` holds one more file than you would think:
+`SystemConfiguration.plist`, which is not a pairing record but *this computer's* identity — and it
+matches, because the advertisement carries the paired host's `SystemBUID` and that file is where
+the `SystemBUID` lives. netmuxd then takes the filename for a udid, decides it is looking at a
+device called `SystemConfiguration`, and stops without trying the real record. Which file it
+reaches first is down to directory order, so this works until it doesn't — measured on one box
+within an hour, `Adding network device` before a re-pairing and this after it:
+
+```
+TXT record matched UDID SystemConfiguration
+```
+
+with no error anywhere and the phone simply absent over Wi-Fi. Hence the `/dev/null` line above,
+which hides that one file from netmuxd and from nothing else. springback still reads it, because
+springback needs it and has its own mount.
 
 *netmuxd starts pairing by itself.* Plug in a device it has no record for and it calls
 `lockdown.pair()` straight away, so the phone asks "Trust This Computer?" without anyone pressing

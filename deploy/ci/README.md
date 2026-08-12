@@ -28,8 +28,8 @@ being what most workflow YAML in the world still says.
 updates into one pull request. To check by hand:
 
 ```sh
-for r in actions/checkout docker/setup-qemu-action docker/setup-buildx-action \
-         docker/login-action docker/metadata-action docker/build-push-action; do
+# Reads the action names out of the workflows, so it cannot go stale when one is added.
+for r in $(grep -rhoE 'uses: [^@]+' .github/workflows deploy/ci | sed 's/uses: //' | sort -u); do
   echo -n "$r: "
   git ls-remote --tags --refs https://github.com/$r |
     sed 's#.*refs/tags/##' | grep -E '^v?[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1
@@ -50,14 +50,26 @@ from, so CI is not a second environment that can drift from what a developer see
 builds the production image, so a broken Dockerfile and a broken test are distinguishable at a
 glance.
 
-**`release.yml`** — on a `v*` tag. Runs the gates again on the exact commit being published, then
-builds and pushes to `ghcr.io/<owner>/springback` for `linux/amd64` and `linux/arm64`. The version
+**`release.yml`** — on a `v*` tag. Runs the gates on the exact commit being published, builds each
+architecture **on its own architecture**, and stitches them into one multi-arch tag. The version
 baked into the binary comes from the tag, so `springback version` and `/api/health` report
 something that corresponds to a commit.
 
-`v0.11.0` publishes `:0.11.0`, `:0.11` and `:latest`.
+`v0.11.0` publishes `:0.11.0`, `:0.11` and `:latest`, each carrying `linux/amd64` and
+`linux/arm64`.
 
-**One thing to watch on the first release:** the arm64 image is built under QEMU emulation, and
-that stage compiles ipatool and ideviceinstaller from source. Expect it to be slow — tens of
-minutes — and if it turns out to be unreliable, dropping `linux/arm64` from `platforms` costs
-nothing but ARM users.
+The three-job shape is not decoration. The first version built both platforms in one job with
+QEMU, and this image compiles two things from source — ipatool needs `CGO_ENABLED=1`, so every one
+of its dependencies goes through an emulated aarch64 toolchain. Measured on a real release:
+**amd64 finished in minutes, arm64 was still compiling at 27**. Native runners make that a normal
+build.
+
+Each build job pushes an untagged image *by digest* and hands the digest to the merge job as an
+artifact — not as a job output, because a matrix job has one set of outputs and each leg
+overwrites the last, which would publish a "multi-arch" tag containing one architecture.
+
+**The cost:** `ubuntu-24.04-arm` is free for public repositories and billed for private ones.
+While this repo is private, either accept the charge, or go back to one runner with
+`setup-qemu-action` and both platforms in a single build (slow but free), or drop `linux/arm64`,
+which costs nothing but ARM users. netmuxd publishes an arm64 image, so the compose recipe in the
+README works on ARM either way — checked against the registry.

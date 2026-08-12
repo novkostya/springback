@@ -80,6 +80,42 @@ services:
       # The pairing records, shared with springback: springback writes one when you pair,
       # netmuxd reads it to recognise that device over Wi-Fi afterwards.
       - ./data/lockdown:/var/lib/lockdown
+
+      # HIDE THE HOST IDENTITY FILE FROM netmuxd, OR WI-FI WORKS ONLY BY LUCK.
+      #
+      # /var/lib/lockdown holds one file per paired device AND SystemConfiguration.plist, which
+      # is not a pairing record at all — it is this computer's own identity (its SystemBUID).
+      # netmuxd scans every *.plist in --plist-storage looking for the one that matches an mDNS
+      # advertisement, and SystemConfiguration.plist MATCHES: the advert carries the paired
+      # host's SystemBUID, which is exactly what that file contains. netmuxd then takes the
+      # filename as the udid, decides it is looking at a device called "SystemConfiguration",
+      # and stops. The real record is never tried and the phone is never added.
+      #
+      # It depends on which file the directory scan reaches first, so it works until it doesn't:
+      # measured on the same box within one hour, Wi-Fi working at 08:33
+      #
+      #     TXT record matched UDID 00008140-000269063E88801C ... Adding network device
+      #
+      # and silently not working at 08:36, after the device's record was deleted and rewritten
+      # (which changed the directory order)
+      #
+      #     TXT record matched UDID SystemConfiguration
+      #
+      # with no error anywhere and the device simply absent over Wi-Fi. Verified by running a
+      # second netmuxd against the same records with this one file removed: it matched the right
+      # record in one second and added the device.
+      #
+      # netmuxd does not need this file — only springback does, and springback has its own mount
+      # of the same directory, which this does not touch.
+      #
+      # /dev/null, and the two tidier-looking alternatives both fail: a path that does not exist
+      # yet is created by Docker as a DIRECTORY, and a directory cannot be mounted over the file
+      # that is already there ("Are you trying to mount a directory onto a file?"). An empty file
+      # would work but would have to be created before the first `up`, which is a setup step in a
+      # file whose whole point is that there is none. /dev/null reads as empty, always exists,
+      # and needs nothing. netmuxd logs one parse warning for it and moves on to the real record.
+      - /dev/null:/var/lib/lockdown/SystemConfiguration.plist
+
       - mux:/run/mux
 
     # A muxer is otherwise completely silent, and `docker logs netmuxd` is the first place to

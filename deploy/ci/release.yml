@@ -4,6 +4,25 @@
 # binary comes from the tag — without the leading `v`, via the metadata action's own `version`
 # output — so `springback version` and `/api/health` report something that corresponds to a
 # commit. A hand-typed VERSION goes stale silently and then lies about what is running.
+#
+# ─────────────────────────────────────────────────────────────────────────────────────────────
+# EACH ARCHITECTURE IS BUILT ON ITS OWN ARCHITECTURE. That is the whole shape of this file, and
+# it is not premature optimisation: the single-job version with `platforms: linux/amd64,arm64`
+# built arm64 under QEMU, and this image compiles two things from source. ipatool has to be built
+# with CGO_ENABLED=1 (its 1Password SDK will not compile with cgo off — see versions.env), so
+# every one of its dependencies goes through an emulated aarch64 toolchain. Measured: amd64 done
+# in minutes, arm64 still compiling at 27.
+#
+# So: a matrix of two jobs on native runners, each pushing an untagged image BY DIGEST, and a
+# third job that stitches the digests into one multi-arch tag. This is docker/build-push-action's
+# documented multi-platform pattern, and it is what makes `docker compose up` on a Raspberry Pi
+# pull the same tag as on a laptop.
+#
+# ONE COST TO KNOW ABOUT: `ubuntu-24.04-arm` is free for public repositories and BILLED for
+# private ones. If this repo is private and that matters, the fallback is one runner with
+# setup-qemu-action and both platforms in a single build — slow but free. Dropping linux/arm64
+# entirely is the other option, and it costs nothing but ARM users.
+# ─────────────────────────────────────────────────────────────────────────────────────────────
 name: release
 
 on:
@@ -14,18 +33,105 @@ permissions:
   contents: read
   packages: write
 
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
 jobs:
-  publish:
+  # The gates once, not once per architecture: they are the same Go code either way, and running
+  # them twice would double the slowest part of a release that is already waiting on two builds.
+  gates:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-
-      # The gates again, on the exact commit being published. A tag can be pushed at any moment,
-      # including to a commit whose CI never ran or never finished.
+      # On the exact commit being published. A tag can be pushed at any moment, including to a
+      # commit whose CI never ran or never finished.
       - name: gates
         run: make gates
 
-      - uses: docker/setup-qemu-action@v4
+  build:
+    needs: gates
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    # THE DIGESTS TRAVEL AS ARTIFACTS, NOT AS JOB OUTPUTS, and that is forced rather than chosen:
+    # a matrix job has one set of outputs and each leg overwrites the last, so the merge job would
+    # receive whichever architecture happened to finish second and publish a "multi-arch" tag with
+    # one architecture in it.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: docker/setup-buildx-action@v4
+
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Every pin, from the one file that holds them. See ci.yml for what an empty one looks like
+      # — it does not fail where it was forgotten, it fails inside git several stages later.
+      - name: read the pins
+        run: grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
+
+      # The version, from the tag, without the leading v. The metadata action does this in the
+      # merge job; here only the number is needed and one line of shell is cheaper than a second
+      # action run per architecture.
+      - name: version from the tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: runtime
+          platforms: ${{ matrix.platform }}
+          # NO TAGS HERE. Two jobs pushing the same tag would race and the second would win,
+          # leaving a single-architecture image under a name that claims to be both. Each pushes
+          # an anonymous manifest identified only by its digest; the merge job names them.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            GO_IMAGE=${{ env.GO_IMAGE }}
+            ALPINE_IMAGE=${{ env.ALPINE_IMAGE }}
+            GOLANGCI_LINT_VERSION=${{ env.GOLANGCI_LINT_VERSION }}
+            IPATOOL_REF=${{ env.IPATOOL_REF }}
+            IDEVICEINSTALLER_REF=${{ env.IDEVICEINSTALLER_REF }}
+          # Scoped per platform, or the two jobs would fight over one cache key and each would
+          # keep evicting the other's layers.
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      - name: export the digest
+        run: |
+          mkdir -p /tmp/digests
+          touch "/tmp/digests/${{ steps.build.outputs.digest }}"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          # One artifact per platform — same-named artifacts are an error, and the slash in
+          # linux/amd64 is not allowed in a name.
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+          if-no-files-found: error
+
+  merge:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
       - uses: docker/setup-buildx-action@v4
 
       - uses: docker/login-action@v4
@@ -37,7 +143,7 @@ jobs:
       - id: meta
         uses: docker/metadata-action@v6
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ${{ env.IMAGE }}
           # v0.11.0 publishes :0.11.0, :0.11 and :latest. The two-part tag is what lets somebody
           # follow patch releases without following minor ones.
           tags: |
@@ -45,29 +151,18 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
             type=raw,value=latest
 
-      # Every pin, from the one file that holds them. See ci.yml for what an empty one looks like
-      # — it does not fail where it was forgotten, it fails inside git several stages later.
-      - name: read the pins
-        run: grep -E '^[A-Z0-9_]+=' versions.env >> "$GITHUB_ENV"
+      # The digests are empty FILES NAMED after each manifest, so the filenames are the argument
+      # list. `imagetools create` takes the tags from the metadata action and the sources from
+      # here, and publishes one index pointing at both architectures.
+      - name: create the multi-arch tags
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf '${{ env.IMAGE }}@%s ' *)
 
-      - name: build and push
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: deploy/Dockerfile
-          target: runtime
-          # arm64 as well as amd64, because the natural home for this is a Raspberry Pi or a
-          # small ARM box sitting next to the devices it manages.
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: |
-            VERSION=${{ steps.meta.outputs.version }}
-            GO_IMAGE=${{ env.GO_IMAGE }}
-            ALPINE_IMAGE=${{ env.ALPINE_IMAGE }}
-            GOLANGCI_LINT_VERSION=${{ env.GOLANGCI_LINT_VERSION }}
-            IPATOOL_REF=${{ env.IPATOOL_REF }}
-            IDEVICEINSTALLER_REF=${{ env.IDEVICEINSTALLER_REF }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+      # Proof, in the log, that the tag really carries both. A release that quietly published one
+      # architecture under a name promising two is the failure this whole file is arranged to
+      # avoid, and it is invisible until an ARM user tries to pull it.
+      - name: show what was published
+        run: docker buildx imagetools inspect ${{ env.IMAGE }}:${{ steps.meta.outputs.version }}
