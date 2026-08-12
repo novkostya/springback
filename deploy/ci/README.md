@@ -1,6 +1,6 @@
 # CI workflows
 
-`ci.yml` and `release.yml` belong at `.github/workflows/`. They are kept here instead because the
+`ci.yml`, `release.yml` and `demo-deploy.yml` belong at `.github/workflows/`. They are kept here instead because the
 credential this repository is pushed with is a GitHub App without the `workflows` permission, and
 GitHub rejects *any* push that creates or modifies a file under `.github/workflows` from such a
 credential — including a push that only meant to change something else.
@@ -9,7 +9,7 @@ To install them:
 
 ```sh
 mkdir -p .github/workflows
-cp deploy/ci/ci.yml deploy/ci/release.yml .github/workflows/
+cp deploy/ci/ci.yml deploy/ci/release.yml deploy/ci/demo-deploy.yml .github/workflows/
 git add -f .github/workflows
 git commit -m "Add CI workflows"
 git push        # needs a credential with the `workflows` scope

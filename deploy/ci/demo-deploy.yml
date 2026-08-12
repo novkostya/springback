@@ -1,0 +1,66 @@
+# Deploys the public demo to fly.io. Copy to .github/workflows/demo-deploy.yml — see deploy/ci/README.
+name: demo-deploy
+
+# NEVER `pull_request`. GitHub withholds secrets from FORK pull requests but hands them to
+# same-repo ones, so a deploy triggered that way gives the fly token to any branch anybody pushes.
+# There are no outside contributors here yet, which makes this a habit rather than a live exposure
+# — and it is the standard way this goes wrong.
+#
+# SCHEDULED AND MANUAL, deliberately not on push. A fixture demo does not need to track every
+# merge, and a deploy per push spends a full image build — this one compiles ipatool,
+# ideviceinstaller and two C programs from source — to move an instance nobody is looking at.
+#
+# NO BRANCH FAN-OUT. Some CI systems run a schedule once per branch carrying the file; GitHub does
+# not — "scheduled workflows will only run on the default branch". One tick, one run, from main's
+# copy. The same file on twenty branches registers no cron entries at all.
+#
+# :37 PAST THE HOUR, NOT :00. GitHub's own guidance: the schedule event can be delayed under load,
+# "high load times include the start of every hour", and sufficiently queued jobs MAY BE DROPPED —
+# dropped, not merely late. 03:37 UTC also keeps it clear of quince's nightly at 22:23.
+#
+# Two more, neither fatal but both surprising later:
+#   - `workflow_dispatch` needs this file ON THE DEFAULT BRANCH before the Run workflow button
+#     exists. After that a run can be aimed at any branch or tag.
+#   - In a PUBLIC repository, scheduled workflows are disabled automatically after 60 days with no
+#     repository activity. Nothing announces that it stopped.
+on:
+  schedule:
+    - cron: "37 3 * * *"
+  workflow_dispatch:
+
+# Least privilege: this job reads the tree and talks to fly. It needs nothing else from GitHub.
+permissions:
+  contents: read
+
+# One deploy at a time, and DO NOT cancel the one in flight: a half-finished fly deploy is a worse
+# state than a queued one. Without this, a manual run and the nightly can overlap and the later
+# image can lose to the earlier.
+concurrency:
+  group: demo-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # The demo's footer carries `git describe`, so the deploy has to be able to see the
+          # tags. The default fetch-depth of 1 has none of them, and `git describe` then falls
+          # back to the bare sha — losing the one thing that says which release it is near.
+          fetch-depth: 0
+
+      # @master, and it is the one action here NOT pinned to a release — checked rather than
+      # copied. superfly/flyctl-actions' newest tag is 1.6 (2024) while the repository has moved on
+      # since; fly's own documentation and every current example use @master, and the action's job
+      # is to fetch the latest flyctl regardless. Pinning 1.6 would pin the installer, not the tool.
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # NOT a bare `flyctl deploy`. flyctl knows nothing about versions.env, so the ARGs the
+      # Dockerfile declares without defaults arrive EMPTY — which is how the release workflow
+      # failed with `fatal: repository '.' does not exist`, an error naming the one path on the
+      # line that was not the problem. deploy/fly-deploy derives the list from the Dockerfile
+      # itself, so a pin added later is either found or reported rather than quietly missing.
+      - run: ./deploy/fly-deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}

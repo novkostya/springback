@@ -1,0 +1,93 @@
+#!/bin/sh
+# fly-deploy — deploy the public demo to fly.io with the pins deploy/Dockerfile needs.
+#
+# WHY THIS EXISTS, when `flyctl deploy` looks like it should be enough.
+#
+# flyctl knows nothing about versions.env, so every ARG the Dockerfile declares WITHOUT a default
+# arrives empty. springback has already paid for this once, in the release workflow, and the error
+# named nothing that was actually wrong:
+#
+#   RUN git clone --depth 1 --branch ${IDEVICEINSTALLER_REF} https://github.com/… /src/ii
+#   fatal: repository '.' does not exist          (exit code 128)
+#
+# With the ref empty, `--branch` swallows the URL and git reads the DESTINATION as the repository
+# to clone. So an unset build-arg presents as "that repository does not exist", pointing at the one
+# path on the line that is not the problem.
+#
+# THE ARG LIST IS DERIVED FROM THE DOCKERFILE, not written out here. A hand-written list is how
+# this recurs: somebody adds an ARG, the Makefile is updated because that is where builds are
+# tested, and only the demo deploy is quietly short one value. Reading `^ARG` means a new pin is
+# either found in versions.env or REPORTED — never silently empty.
+set -eu
+
+cd "$(dirname "$0")/.."
+
+[ -f versions.env ] || { echo "fly-deploy: no versions.env — run this from a springback checkout" >&2; exit 2; }
+[ -f fly.toml ] || { echo "fly-deploy: no fly.toml — run this from a springback checkout" >&2; exit 2; }
+command -v flyctl >/dev/null 2>&1 || {
+	echo "fly-deploy: flyctl is not on PATH. This runs where flyctl is installed and" >&2
+	echo "            authenticated: the CI runner, or your own machine. The session box" >&2
+	echo "            has neither (deploy/demo.md)." >&2
+	exit 2
+}
+
+set --
+defaulted=''
+missing=''
+
+# A NAME IS DEFAULTED IF **ANY** LINE DEFAULTS IT, which is not the same as the line in front of
+# you. A multi-stage Dockerfile declares a global ARG once with its default and then re-declares it
+# BARE inside each stage that needs it, because an ARG before the first FROM is out of scope
+# afterwards. So `ARG PIN_HINT` appears three times with no `=` and once with one.
+#
+# Judging each line on its own made this script demand a versions.env entry for PIN_HINT — which is
+# a help string, not a pin. Caught on the first run, and the failure was the honest kind: it
+# refused to deploy rather than passing something empty.
+defaults=$(grep '^ARG ' deploy/Dockerfile | sed -n 's/^ARG \([A-Za-z0-9_]*\)=.*/\1/p' | sort -u)
+
+# Fed by a here-doc rather than a pipe: `… | while read` runs the loop in a SUBSHELL, so every
+# `set --` below would be discarded at the `done` and the deploy would carry no build-args at all.
+while IFS= read -r name; do
+	[ -n "$name" ] || continue
+	has_default=no
+	for d in $defaults; do
+		[ "$d" = "$name" ] && has_default=yes && break
+	done
+
+	# VERSION is not a pin. It is what this build IS, and it is passed below.
+	[ "$name" = VERSION ] && continue
+
+	# The first match wins, matching `.`-sourcing semantics.
+	value=$(sed -n "s/^${name}=//p" versions.env | head -n 1)
+	if [ -n "$value" ]; then
+		set -- "$@" --build-arg "${name}=${value}"
+	elif [ "$has_default" = yes ]; then
+		defaulted="$defaulted $name"
+	else
+		missing="$missing $name"
+	fi
+done <<EOF
+$(grep '^ARG ' deploy/Dockerfile | sed 's/^ARG //; s/=.*//' | sort -u)
+EOF
+
+if [ -n "$missing" ]; then
+	echo "fly-deploy: deploy/Dockerfile declares ARGs with no default and no versions.env entry:" >&2
+	echo "           $missing" >&2
+	echo "           Add them to versions.env — an empty build-arg fails later, somewhere unrelated." >&2
+	exit 1
+fi
+[ -n "$defaulted" ] && echo "fly-deploy: using the Dockerfile's own defaults for:$defaulted"
+
+# THE DEMO SAYS WHAT IT IS BUILT FROM. Without this the footer reads 0.0.0-dev — the same string a
+# laptop build carries — so nobody looking at the running demo can tell which commit it is.
+version=$(git describe --tags --always --dirty 2>/dev/null || echo unknown)
+set -- "$@" --build-arg "VERSION=demo-${version}"
+
+# --ha=false because fly's default for a first deploy is TWO machines. Two would each seed their
+# own throwaway state and each hold their own sessions, so a visitor would be load-balanced between
+# two different demos — and pay for two. One machine, asleep most of the time, is the design.
+#
+# --remote-only: this image builds ipatool, ideviceinstaller and two small C programs from source.
+# fly's builder does it with a warm cache; a GitHub runner would do it from cold every night.
+echo "fly-deploy: deploying $version"
+exec flyctl deploy --remote-only --ha=false "$@"
