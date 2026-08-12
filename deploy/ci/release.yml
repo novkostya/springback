@@ -1,9 +1,9 @@
 # Publish a tagged version to GHCR.
 #
-# `git tag v0.11.0 && git push --tags` is the whole release process. The version baked into the
-# binary comes from the tag, so `springback version` and `/api/health` report something that
-# actually corresponds to a commit — a hand-typed VERSION is the kind of thing that goes stale
-# silently and then lies about which code is running.
+# `git tag v0.13.1 && git push --tags` is the whole release process. The version baked into the
+# binary comes from the tag — without the leading `v`, via the metadata action's own `version`
+# output — so `springback version` and `/api/health` report something that corresponds to a
+# commit. A hand-typed VERSION goes stale silently and then lies about what is running.
 name: release
 
 on:
@@ -58,6 +58,6 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ github.ref_name }}
+            VERSION=${{ steps.meta.outputs.version }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
