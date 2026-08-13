@@ -259,6 +259,23 @@ const fmtSize = (n) => {
 };
 const fmtDate = (s) => (s ? new Date(s).toLocaleString() : "—");
 
+// listOf writes a list the way a person would: "a", "a and b", "a, b and c".
+//
+// `join(" and ")` produced "a and b and c" the first time three Apple IDs owned one app, which is
+// how a machine writes a list. Intl.ListFormat knows the rule and the punctuation for it; the
+// fallback is only for a browser without it, and produces the same shape for the sizes this app
+// ever shows.
+function listOf(items) {
+  const xs = items.filter(Boolean);
+  if (xs.length < 2) return xs[0] || "";
+  try {
+    // en-GB, matching the rest of the copy: no comma before the final "and".
+    return new Intl.ListFormat("en-GB", { style: "long", type: "conjunction" }).format(xs);
+  } catch {
+    return `${xs.slice(0, -1).join(", ")} and ${xs[xs.length - 1]}`;
+  }
+}
+
 // fmtDay is a date with no clock on it, for facts that ARE a date rather than a moment.
 //
 // The App Store's release date is a day; rendering it as "12/03/2024, 07:00:00" would attach a
@@ -1242,20 +1259,32 @@ function renderAppDetail() {
         .map((s) => s.owner_apple_id).filter(Boolean))];
       const signedIn = owners.filter((o) =>
         accounts.some((acc) => acc.email.toLowerCase() === o.toLowerCase()));
+      // COUNT-AWARE, BECAUSE THREE HAPPENS. The first version wrote "A and B and C. Both are
+      // signed in here" — a list joined with the wrong word and a sentence that can only be true
+      // of two. On the library this was measured against, an app on three devices under three
+      // Apple IDs is ordinary.
       let split = null;
       if (owners.length > 1) {
-        if (signedIn.length > 1) {
+        const bought = `Bought with ${listOf(owners)}`;
+        if (signedIn.length === 0) {
+          split = el("p", { className: "note warn-note", textContent:
+            `${bought} — none of them is signed in here, so the download will fail with `
+            + `"license not found". Add one of them on the Accounts screen.` });
+        } else if (signedIn.length === owners.length) {
           split = el("p", { className: "note", textContent:
-            `Bought with ${owners.join(" and ")}. Both are signed in here, so either can download `
-            + `it — the copy you archive stays tied to whichever you use.` });
+            `${bought}. ${owners.length === 2 ? "Both are" : "All of them are"} signed in here, so `
+            + `${owners.length === 2 ? "either" : "any of them"} can download it — the copy you `
+            + `archive stays tied to whichever you use.` });
         } else if (signedIn.length === 1) {
           split = el("p", { className: "note", textContent:
-            `Bought with ${owners.join(" and ")}, of which only ${signedIn[0]} is signed in here. `
-            + `That is the one to use.` });
+            `${bought}. Of those, only ${signedIn[0]} is signed in here — that is the one to use.` });
         } else {
-          split = el("p", { className: "note warn-note", textContent:
-            `Bought with ${owners.join(" and ")} — neither is signed in here, so the download will `
-            + `fail with "license not found". Add one of them on the Accounts screen.` });
+          // Some but not all: name the usable ones rather than making the reader work out the
+          // difference between two lists.
+          split = el("p", { className: "note", textContent:
+            `${bought}. Of those, ${listOf(signedIn)} are signed in here, so `
+            + `${signedIn.length === 2 ? "either" : "any of them"} can download it — the copy you `
+            + `archive stays tied to whichever you use.` });
         }
       }
 
