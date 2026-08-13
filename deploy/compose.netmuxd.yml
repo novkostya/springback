@@ -44,11 +44,29 @@ services:
       - ./data/lockdown:/var/lib/lockdown
 
       # HIDES THIS COMPUTER'S OWN IDENTITY FILE, AND WI-FI DEPENDS ON IT. /var/lib/lockdown holds
-      # one file that is not a pairing record — SystemConfiguration.plist — and netmuxd matches it
-      # against mDNS advertisements anyway, then takes the filename for a udid and stops without
-      # trying the real record. Which file it reaches first is down to directory order, so without
-      # this line Wi-Fi works only by luck, silently. netmuxd does not need the file; springback
-      # does, and has its own mount of the same directory.
+      # one file that is not a pairing record — SystemConfiguration.plist — and netmuxd reads every
+      # file in this directory as though it were one.
+      #
+      # THE MECHANISM, read from netmuxd's source rather than guessed (pairing_file.rs). A plist
+      # with no `UDID` key is indexed under its FILE NAME instead, so this file becomes a device
+      # called "SystemConfiguration"; and a plist with a `HostID` is added to the table that Wi-Fi
+      # lookups search. netmuxd WRITES its own HostID into this very file. So the moment it is
+      # readable, a Bonjour advertisement can match the file rather than the phone, and the lookup
+      # returns "SystemConfiguration" as the udid — after which the real pairing record is never
+      # tried and the device is simply unreachable over Wi-Fi.
+      #
+      # /dev/null is what makes it unreadable: an empty file fails to parse, and the parse failure
+      # is what keeps it out of both tables. A valid-but-empty plist does NOT work — netmuxd fills
+      # in a HostID and writes it back, and the trap closes again.
+      #
+      # THE COST IS ONE NOISY WARNING, every few seconds, in netmuxd's log:
+      #
+      #   WARN netmuxd::pairing_file] Failed to parse SystemConfiguration.plist (…), regenerating
+      #
+      # That is this line working as intended. It is also why any pairing NETMUXD ITSELF does uses
+      # a throwaway identity — it regenerates one per attempt and cannot persist it. Pairing from
+      # springback is unaffected: that goes through its own mount of this directory, where the real
+      # file is present.
       - /dev/null:/var/lib/lockdown/SystemConfiguration.plist
 
       - mux:/run/mux

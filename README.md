@@ -142,7 +142,7 @@ volumes:
   mux:
 ```
 
-Two netmuxd habits worth knowing:
+Three netmuxd habits worth knowing:
 
 - **Restart it after plugging a device in** (`docker compose restart netmuxd`) if the device does
   not appear. It gives up on a busy USB port after a few seconds and does not retry.
@@ -150,6 +150,21 @@ Two netmuxd habits worth knowing:
   without anyone pressing anything, and there is no way to turn that off. Nothing happens unless
   you tap Trust — but if you want pairing to be deliberate, use plain usbmuxd, which never does
   this.
+- **Its log repeats a scary-looking warning, and it is expected.** Every few seconds:
+
+  ```
+  WARN netmuxd::pairing_file] Failed to parse SystemConfiguration.plist
+       (… UnexpectedEof … FilePosition(0) …), regenerating
+  ```
+
+  That is the `/dev/null` line in the compose file doing its job. netmuxd reads that path for its
+  own identity, finds an empty file, says so, and carries on with a fresh one. Devices still pair,
+  still attach over Wi-Fi and still install — the same log shows the pairing records being read a
+  line later. The only thing it costs is that any pairing **netmuxd itself** performs uses a host
+  identity that is not written down anywhere.
+
+  It cannot be silenced without giving netmuxd a readable file there, and that brings back the
+  Wi-Fi bug the mount exists to prevent — see the comment on the mount for the mechanism.
 
 ### Then
 
