@@ -96,6 +96,10 @@ header {
 .titlebar { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .tagline { margin: 1px 0 10px; color: var(--dim); font-size: 13px; }
+/* HIDDEN ON A PHONE, and hidden by default rather than by a max-width query, so a browser that
+   never matches the desktop rule below errs towards the smaller header. The gate keeps its own —
+   see .gate-card .tagline, which this does not touch. */
+.titlebar .tagline { display: none; }
 
 
 nav { display: flex; gap: 2px; overflow-x: auto; }
@@ -510,6 +514,9 @@ input, select {
 
 @media (min-width: 640px) {
   input, select { font-size: 15px; }
+  /* The pitch comes back where the header is not competing with the content for a phone screen.
+     Only in the header — the gate's copy of it is never hidden. */
+  .titlebar .tagline { display: block; }
 }
 
 /* The toast floats over the page, so whatever is at the bottom is hidden while it shows. Every

@@ -73,14 +73,18 @@
 <header>
   <!-- NO LOGO IN HERE. The mark lives on the favicon and the home-screen icon, where it does a
        job; in the header it was decoration next to a wordmark that already says the same thing. -->
-  <!-- NO TAGLINE IN THE HEADER. It is the project's one-line pitch and it belongs on the login
-       screen and the README, where somebody is deciding what this is. Here it was two lines of
-       fixed chrome on top of every screen, on a phone, forever — read once and then paid for on
-       every visit. The header is fixed, so its height is subtracted from the content on every
-       screen; that height is measured in JS, so removing this needs no other change. -->
+  <!-- THE TAGLINE IS DESKTOP-ONLY, hidden below 640px in the stylesheet rather than removed here.
+       On a phone the header is fixed chrome subtracted from every screen, and two lines of pitch
+       are read once and paid for on every visit; on a desktop the same two lines cost nothing
+       anybody notices. The login screen keeps it at every size — that is where somebody is still
+       deciding what this is.
+       Present in the markup either way, so the header's measured height stays correct: it is
+       measured in JS and reclaimed as body padding, and `display: none` is part of that
+       measurement. -->
   <div class="titlebar">
     <div>
       <h1>springback</h1>
+      <p class="tagline">Keep the apps you own, after Apple stops offering them.</p>
     </div>
   </div>
   <nav>
