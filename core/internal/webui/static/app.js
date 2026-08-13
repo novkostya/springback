@@ -1213,23 +1213,45 @@ function renderAppDetail() {
       const owner = (a && a.owner_apple_id) || (detail.acting && detail.acting.owner_apple_id) || "";
       const match = owner && accounts.find((acc) => acc.email.toLowerCase() === owner.toLowerCase());
 
-      // WHEN THE COPIES DISAGREE, SAY SO. The same app can be bought under different Apple IDs on
-      // different devices — 82 of the 201 multi-device apps in the library this was measured
-      // against — and the download works only with the one that owns it. Picking silently would
-      // send somebody to "license not found" with nothing on screen to explain it.
+      // WHEN THE COPIES WERE BOUGHT BY DIFFERENT APPLE IDS, SAY WHICH — and say it correctly.
+      //
+      // THE FIRST VERSION OF THIS SENTENCE WAS WRONG. It said the download "only works with the
+      // one that owns the copy you want", which reads as though the accounts were alternatives.
+      // They are not: a receipt on a device is proof that THAT Apple ID holds a licence, so two
+      // receipts under two accounts mean two licences, and either will download it. Reported by
+      // somebody looking at a page telling them to choose carefully between two accounts that
+      // both worked.
+      //
+      // What is worth saying instead is which of them springback can actually use — an account
+      // that is not signed in here cannot download anything — and that the archived copy stays
+      // tied to whichever one fetched it, because an update fetched with a different account
+      // fails with "license not found" (see the update path on the library page).
       const owners = [...new Set(((detail.sightings) || [])
         .map((s) => s.owner_apple_id).filter(Boolean))];
-      const split = owners.length > 1 ? el("p", { className: "note warn-note" }, [
-        `This app was bought with more than one Apple ID: ${owners.join(", ")}. `,
-        `The download only works with the one that owns the copy you want — `,
-        `${owner || owners[0]} is the account for the copy on `,
-        (detail.acting && sightingLabel(detail.acting, detail.sightings || [])) || "the device chosen above",
-        ".",
-      ]) : null;
+      const signedIn = owners.filter((o) =>
+        accounts.some((acc) => acc.email.toLowerCase() === o.toLowerCase()));
+      let split = null;
+      if (owners.length > 1) {
+        if (signedIn.length > 1) {
+          split = el("p", { className: "note", textContent:
+            `Bought with ${owners.join(" and ")}. Both are signed in here, so either can download `
+            + `it — the copy you archive stays tied to whichever you use.` });
+        } else if (signedIn.length === 1) {
+          split = el("p", { className: "note", textContent:
+            `Bought with ${owners.join(" and ")}, of which only ${signedIn[0]} is signed in here. `
+            + `That is the one to use.` });
+        } else {
+          split = el("p", { className: "note warn-note", textContent:
+            `Bought with ${owners.join(" and ")} — neither is signed in here, so the download will `
+            + `fail with "license not found". Add one of them on the Accounts screen.` });
+        }
+      }
 
       blocks.push(el("div", { className: "actions-block" }, [
         split,
-        el("p", { className: "hint", textContent:
+        // SUPPRESSED WHEN THE NOTE ABOVE ALREADY SAID IT. With several owners the two lines were
+        // the same sentence twice, the second one narrower and slightly at odds with the first.
+        split ? null : el("p", { className: "hint", textContent:
           owner
             ? (match
                 ? `Bought with ${owner}, which is signed in here.`
@@ -1357,7 +1379,11 @@ function renderAppDetail() {
     blocks.push(el("div", { className: "actions-block" }, [del]));
   }
 
-  root.replaceChildren(...blocks);
+  // FILTERED, BECAUSE replaceChildren TURNS A NON-NODE INTO TEXT. el() drops null children
+  // silently, so a conditional block reads as though it does nothing when it returns null — but
+  // this call is not el(), and the word "null" appeared on the page between the facts table and
+  // the delisted warning. Reported with a screenshot.
+  root.replaceChildren(...blocks.filter(Boolean));
 }
 
 // installRow is a device with ONE affordance and one state, and every state is distinguishable
