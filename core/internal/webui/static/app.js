@@ -1669,7 +1669,16 @@ function renderApps() {
   ];
 
   if (!owned) {
-    blocks.push(el("p", { className: "empty", textContent: "Reading what this box remembers…" }));
+    // THE SAME SHIMMER THE DEVICE PAGE USES, and the same helper rather than a copy of it: two
+    // lists that fill in differently read as two different kinds of screen. It replaces a line of
+    // text — "Reading what this box remembers…" — which was both a different idiom and a
+    // differently-sized placeholder, so the list jolted as it arrived.
+    //
+    // NO EXPLANATORY LINE ABOVE IT, unlike the device page. There the wait is a lockdown session
+    // plus a store lookup per app and the hint says so ("about half a minute"); here it is a read
+    // of local files, and a sentence preparing somebody for a wait that does not happen would be
+    // a small lie told every time the tab is opened.
+    blocks.push(appsSkeleton());
     root.replaceChildren(...blocks);
     return;
   }
