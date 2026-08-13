@@ -284,6 +284,22 @@ func (r *Resolver) Resolve(ctx context.Context, bundleID string, fronts []string
 	return res
 }
 
+// Cached answers only from what is already known, and never asks anybody.
+//
+// FOR SCREENS THAT MUST NOT MAKE A CLAIM THEY HAVE NOT CHECKED. The Apps list can hold an app that
+// is in the library and on no device at all, so nothing in that path has ever looked it up — and
+// guessing produces exactly the wrong kind of wrong: an archived app that is still perfectly
+// available in the App Store, labelled DELISTED, on a screen whose whole value is that the label
+// means something. Empty is the honest answer, and this is how a caller gets one.
+func (r *Resolver) Cached(bundleID string, fronts []string) (Result, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if e, ok := r.cache[key(bundleID, fronts)]; ok && time.Since(e.At) < r.ttl {
+		return e.Result, true
+	}
+	return Result{}, false
+}
+
 func (r *Resolver) query(ctx context.Context, bundleID string, fronts []string) Result {
 	results := make([]tools.StoreLookup, len(fronts))
 

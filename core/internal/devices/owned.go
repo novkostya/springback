@@ -142,10 +142,23 @@ func (s *Service) Owned(ctx context.Context) (Owned, error) {
 			if err != nil {
 				continue
 			}
-			byBundle[bundle] = &OwnedApp{
-				BundleID: bundle, Name: item.Name, AppID: id,
-				Status: storefront.Delisted, Archived: true,
+			a := &OwnedApp{BundleID: bundle, Name: item.Name, AppID: id, Archived: true}
+			// NO VERDICT UNLESS ONE HAS ACTUALLY BEEN REACHED. This app is in the library
+			// and on no device, so nothing in this path has ever looked it up — and the
+			// first version assumed DELISTED, on the reasoning that an app you archived and
+			// removed everywhere is probably gone.
+			//
+			// That is a guess wearing the clothes of a measurement, and it fails in the
+			// direction that matters: five apps archived from a real library, every one of
+			// them still on sale, would each have carried a red DELISTED chip on a screen
+			// whose entire value is that the chip means something. A cached answer is used
+			// when there is one; otherwise the row simply carries no claim.
+			if s.Resolver != nil {
+				if res, ok := s.Resolver.Cached(bundle, storefront.Storefronts("")); ok {
+					a.Status = res.Status
+				}
 			}
+			byBundle[bundle] = a
 		}
 	}
 

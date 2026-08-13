@@ -152,6 +152,16 @@ func TestOwnedIncludesArchiveOnlyApps(t *testing.T) {
 	if a.Name != "Boomerang from Instagram" {
 		t.Errorf("name = %q, want the archive's own name", a.Name)
 	}
+	// AND IT MAKES NO CLAIM IT HAS NOT CHECKED. Nothing in this path looked the app up, and the
+	// first version assumed DELISTED — which on a real library of five archived apps, every one
+	// still on sale, would have put a red chip on all five. The chip is only worth anything if
+	// it is never guessed.
+	if a.Status != "" {
+		t.Errorf("store_status = %q, want no verdict when none was reached", a.Status)
+	}
+	if owned.Delisted != 0 {
+		t.Errorf("delisted count = %d, want 0 — nothing was checked", owned.Delisted)
+	}
 }
 
 // TestOwnedPutsDelistedFirst: the screen exists for the apps that are gone, and a reader scrolling
