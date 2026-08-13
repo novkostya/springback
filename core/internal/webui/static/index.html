@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- viewport-fit=cover IS WHAT MAKES env(safe-area-inset-*) MEAN ANYTHING. Without it iOS reports
+     every inset as 0 and insets the layout viewport itself instead — which looks like it works,
+     and is why the toast carried a comment about clearing the home indicator using a value that
+     was always zero. The clearance was really Safari's, not ours, and Safari's version goes away
+     the moment its bottom toolbar collapses under a scrolling page.
+     With cover, the page owns the whole screen and every fixed edge below applies its own inset:
+     the header's top, the toast's bottom, and both sides for a notch in landscape.
+     NOT maximum-scale / user-scalable=no, which would also stop pinch-zoom — WCAG 1.4.4. -->
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>springback</title>
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <!-- iOS ignores an SVG icon when a page is added to the home screen, and falls back to a

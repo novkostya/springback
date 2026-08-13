@@ -63,8 +63,11 @@ body {
 header {
   /* NO SIDE PADDING ON THE BAR ITSELF. The bar spans the window — its background and its rule
      should reach both edges — while its CONTENTS sit in the column, which is what .titlebar and
-     nav do below. */
-  padding: 14px 0 0;
+     nav do below.
+     THE TOP INSET IS NOT DECORATION under viewport-fit=cover: the page now owns the status bar
+     and the notch, so without it the title sits under the clock. The height is measured in JS and
+     reclaimed as body padding, so growing it here needs no second change. */
+  padding: calc(14px + env(safe-area-inset-top, 0px)) 0 0;
   border-bottom: 1px solid var(--line);
   position: fixed;
   left: 0;
@@ -80,7 +83,16 @@ header {
    its own layer can be composited with the page's new scroll offset applied but its sticky
    adjustment not yet recomputed — so it is drawn at its static position, hundreds of pixels
    above the viewport, and simply is not there. Sticky and forced layer promotion do not mix. */
-.titlebar, nav { max-width: var(--measure); margin-left: auto; margin-right: auto; padding: 0 var(--gutter); }
+/* max() rather than a sum: the gutter is already generous, and a notch in landscape only needs
+   more where it actually intrudes. On a phone with no insets these resolve to the gutter exactly
+   as before. */
+.titlebar, nav {
+  max-width: var(--measure);
+  margin-left: auto;
+  margin-right: auto;
+  padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+}
 .titlebar { display: flex; align-items: center; gap: 10px; }
 h1 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .tagline { margin: 1px 0 10px; color: var(--dim); font-size: 13px; }
@@ -101,7 +113,18 @@ nav button {
 }
 nav button.active { color: var(--ink); border-bottom-color: var(--accent); }
 
-main { padding: var(--gutter); max-width: var(--measure); margin: 0 auto; }
+main {
+  max-width: var(--measure);
+  margin: 0 auto;
+  padding: var(--gutter);
+  /* THE SAME THREE INSETS AS THE HEADER AND THE TOAST, for the same reason: under
+     viewport-fit=cover the page owns the whole screen, so the last row of a long list would
+     otherwise end up under the home indicator and the first column under a landscape notch.
+     max() keeps the ordinary gutter on a device with no insets. */
+  padding-left: max(var(--gutter), env(safe-area-inset-left, 0px));
+  padding-right: max(var(--gutter), env(safe-area-inset-right, 0px));
+  padding-bottom: calc(var(--gutter) + env(safe-area-inset-bottom, 0px));
+}
 
 .banner {
   max-width: calc(var(--measure) - var(--gutter) * 2);
@@ -496,12 +519,15 @@ main { padding-bottom: 96px; }
 
 #toast {
   position: fixed;
-  left: 12px;
-  right: 12px;
-  /* CLEAR OF THE HOME INDICATOR. On a phone with no home button the bottom ~34px belongs to
-     the system, and a bar pinned at `bottom: 16px` sits under it — the last line of a long
-     error was being crossed out by the indicator. env() is 0 on anything without one, so the
-     fallback costs nothing. */
+  /* CLEAR OF THE HOME INDICATOR, AND OF A NOTCH IN LANDSCAPE. On a phone with no home button the
+     bottom ~34px belongs to the system, and a bar pinned at `bottom: 16px` sits under it — the
+     last line of a long error was being crossed out by the indicator.
+     THIS RULE USED TO BE INERT. env() reports 0 unless the page asks for viewport-fit=cover, and
+     the meta tag did not — so the value added nothing and the clearance was really Safari's own
+     viewport inset, which disappears when its bottom toolbar collapses under a scrolling page.
+     The meta tag opts in now, so these are the insets that actually apply. */
+  left: max(12px, env(safe-area-inset-left, 0px));
+  right: max(12px, env(safe-area-inset-right, 0px));
   bottom: calc(16px + env(safe-area-inset-bottom, 0px));
   margin: 0 auto;
   max-width: 560px;
