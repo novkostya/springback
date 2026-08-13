@@ -1267,9 +1267,12 @@ function renderAppDetail() {
       if (owners.length > 1) {
         const bought = `Bought with ${listOf(owners)}`;
         if (signedIn.length === 0) {
-          split = el("p", { className: "note warn-note", textContent:
-            `${bought} — none of them is signed in here, so the download will fail with `
-            + `"license not found". Add one of them on the Accounts screen.` });
+          // A NOTE RATHER THAN A WARNING, now that the advice is "try it". Red said this was a
+          // dead end; it is a thing worth attempting, and the worst case costs one request.
+          split = el("p", { className: "note", textContent:
+            `${bought} — none of them is signed in here. Try an account below anyway: a licence can `
+            + `sit with a different Apple ID than a receipt names, and only Apple can say. Adding one `
+            + `of those addresses on the Accounts screen is the surer route.` });
         } else if (signedIn.length === owners.length) {
           split = el("p", { className: "note", textContent:
             `${bought}. ${owners.length === 2 ? "Both are" : "All of them are"} signed in here, so `
@@ -1292,11 +1295,20 @@ function renderAppDetail() {
         split,
         // SUPPRESSED WHEN THE NOTE ABOVE ALREADY SAID IT. With several owners the two lines were
         // the same sentence twice, the second one narrower and slightly at odds with the first.
+        // "WILL FAIL" WAS A CLAIM SPRINGBACK CANNOT MAKE, and it discouraged an attempt that
+        // often works. The receipt names the Apple ID that BOUGHT the copy on that device; it
+        // does not name every Apple ID that holds a licence. Family Sharing grants one to the
+        // household, an address can change under the same account, and the same app is often
+        // bought again by somebody else in the family. Only Apple knows, and asking costs a
+        // request — springback never passes --purchase, so a refusal buys nothing.
         split ? null : el("p", { className: "hint", textContent:
           owner
             ? (match
                 ? `Bought with ${owner}, which is signed in here.`
-                : `Bought with ${owner} — that Apple ID is not signed in, so the download will fail with "license not found".`)
+                : `Bought with ${owner}, which is not signed in here — try one of the accounts below `
+                  + `anyway. A licence can sit with a different Apple ID than the receipt names, and `
+                  + `only Apple can say; if none holds one it answers "license not found", and nothing `
+                  + `is bought either way.`)
             : "springback never buys anything: if the account does not already own this, the download fails." }),
         accountPicker(match && match.slug, `archive:${appID}`),
         (() => {
