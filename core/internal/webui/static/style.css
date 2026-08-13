@@ -618,11 +618,26 @@ main { padding-bottom: 96px; }
 
 /* "in library" is a SECOND, INDEPENDENT fact about an app, not a qualifier on the store verdict.
    As trailing grey text beside the status chip it read as a fragment of that chip, so it is a
-   badge of its own, stacked under it. */
+   badge of its own, stacked under it.
+
+   STACKED RATHER THAN SIDE BY SIDE, everywhere. Two badges in a row steal the width the title and
+   the sub-line need — measured on the Apps screen, where "on alina-iphone · com.apple.clips" was
+   cut to "on alina-iphone · c…" on the one row that had two badges, so the row with the MOST to
+   say showed the least.
+
+   ANCHORED TO THE TITLE, which is the part that was inconsistent. The column centres its content,
+   so one badge sat at the row's middle and a PAIR centred as a block — putting the first badge
+   higher on rows that had two. Scrolling a list of a hundred apps, the DELISTED chips wandered up
+   and down as rows gained a second badge. Aligning to the top fixes them in one place and reads
+   better besides: the status is a fact about the app, and the app's name is the line it now sits
+   beside. */
 .row-right.stack {
   flex-direction: column;
   align-items: flex-end;
   gap: 4px;
+  align-self: flex-start;
+  /* Optical, not arithmetic: the badge's cap height against the title's. */
+  padding-top: 2px;
 }
 
 .badge {

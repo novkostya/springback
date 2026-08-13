@@ -1821,7 +1821,10 @@ function ownedRow(a) {
       // opening the app, rather than losing where the app actually is.
       el("div", { className: "row-sub", textContent: `${where} · ${a.bundle_id}` }),
     ]),
-    el("div", { className: "row-right" }, [
+    // `stack`, the same as the device list's rows. Without it this screen laid its two badges
+    // out side by side while the other stacked them — the same pair of facts in two shapes,
+    // one screen apart — and the horizontal version ate the width the sub-line needed.
+    el("div", { className: "row-right stack" }, [
       a.store_status ? el("span", { className: `status ${a.store_status}`, textContent: statusLabel(a.store_status) }) : null,
       a.in_library ? el("span", { className: "badge library", textContent: "in library" }) : null,
     ]),
