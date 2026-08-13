@@ -42,6 +42,9 @@ type OwnedApp struct {
 	Name     string            `json:"name"`
 	AppID    int64             `json:"app_id,omitempty"`
 	Status   storefront.Status `json:"store_status,omitempty"`
+	// StoreUpdated is when the store version was last released, as of the sighting that
+	// recorded it. A store fact rather than a device one, and one that moves slowly.
+	StoreUpdated string `json:"store_updated,omitempty"`
 	// InLibrary and LibraryID are recomputed live rather than read from the remembered list:
 	// archiving an app is the one thing the user does that changes this answer, and a screen
 	// that told them it had not worked would be worse than one that never mentioned it.
@@ -114,7 +117,7 @@ func (s *Service) Owned(ctx context.Context) (Owned, error) {
 			}
 			o := byBundle[a.BundleID]
 			if o == nil {
-				o = &OwnedApp{BundleID: a.BundleID, Name: appName(a), Status: a.Status}
+				o = &OwnedApp{BundleID: a.BundleID, Name: appName(a), Status: a.Status, StoreUpdated: a.StoreUpdated}
 				byBundle[a.BundleID] = o
 			}
 			// THE FIRST NON-ZERO ID WINS AND IS NEVER OVERWRITTEN. It comes from a

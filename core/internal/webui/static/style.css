@@ -731,9 +731,11 @@ body { padding-top: var(--header-h); }
 
 /* --- search ------------------------------------------------------------- */
 
-.search-wrap { margin: 10px 0 6px; }
+.search-wrap { margin: 10px 0 6px; position: relative; }
 .search {
   width: 100%;
+  /* Room for the clear button, so a long query runs under it rather than behind it. */
+  padding-right: calc(var(--tap) - 4px);
   /* 16px OR LARGER, OR iOS ZOOMS. Safari magnifies the page when a focused input's text is
      under 16px, and the page never zooms back out — the same rule the other inputs follow. */
   font-size: 16px;
@@ -747,3 +749,32 @@ body { padding-top: var(--header-h); }
   appearance: none;
 }
 .search:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* THE NATIVE CLEAR BUTTON IS HIDDEN, NOT RELIED ON. WebKit draws one for input[type=search] on a
+   Mac and none at all on iOS, which is where this app is actually used — so the field had no way
+   to be emptied but selecting the text and deleting it one-handed. The button beside it is ours,
+   and hiding the native one stops a second ✕ appearing next to it on a desktop. */
+.search::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
+
+.search-clear {
+  position: absolute;
+  right: 0;
+  top: 0;
+  /* A FULL-HEIGHT TAP TARGET rather than a small glyph: the whole right end of the field is
+     pressable, which is what makes it usable with a thumb. The ✕ is only what it looks like. */
+  height: 100%;
+  width: var(--tap);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--muted);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.search-clear:hover { color: var(--ink); }
+.search-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: var(--radius); }
+.search-clear[hidden] { display: none; }

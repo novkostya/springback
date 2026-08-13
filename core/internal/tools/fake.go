@@ -588,8 +588,28 @@ func (f *Fake) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		res.TrackName = lastSegment(bundleID)
 		res.Version = f.storeVer[bundleID]
 		res.FileSize = fakeSize(bundleID)
+		res.ReleaseDate = fakeReleaseDate(bundleID)
 	}
 	return res
+}
+
+// fakeReleaseDate gives each listed app a stable last-updated date, derived from its bundle id so
+// it never moves between runs.
+//
+// SPREAD ACROSS YEARS ON PURPOSE. The date exists on screen to answer "how stale is my copy", and
+// a fixture set where everything was updated last Tuesday cannot show the interesting reading: an
+// app whose store version has not moved since 2019 is one nobody is maintaining, and the copy on
+// this box may be the last one anybody keeps. Fixtures that only demonstrate the boring case are
+// how a screen ships looking fine and saying nothing.
+func fakeReleaseDate(bundleID string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(bundleID))
+	sum := h.Sum32()
+	// A day somewhere in the last seven years, at midnight UTC — the shape Apple's
+	// currentVersionReleaseDate has.
+	day := time.Date(2019, time.January, 1, 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, int(sum%2555))
+	return day.Format("2006-01-02T15:04:05Z")
 }
 
 // validStorefront is the fake's stand-in for Apple's own storefront list — deliberately small,

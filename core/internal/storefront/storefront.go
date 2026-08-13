@@ -86,9 +86,14 @@ type Result struct {
 	// ArtworkURL is the store's icon, and it is here because some apps have no other picture:
 	// a device hands back a generic tile for anything SpringBoard has not rendered. Empty for
 	// a delisted app, which has no listing to carry artwork.
-	ArtworkURL string   `json:"artwork_url,omitempty"`
-	Checked    []string `json:"checked"`
-	Errors     []string `json:"errors,omitempty"`
+	ArtworkURL string `json:"artwork_url,omitempty"`
+	// ReleaseDate is when the store version now on sale was released — Apple's
+	// `currentVersionReleaseDate`. It answers "how stale is my copy" in the units people
+	// actually think in: a library copy one version behind matters differently if the store
+	// moved last week or in 2019.
+	ReleaseDate string   `json:"release_date,omitempty"`
+	Checked     []string `json:"checked"`
+	Errors      []string `json:"errors,omitempty"`
 }
 
 // appleRegion maps an Apple part-number region code onto an iTunes storefront.
@@ -342,6 +347,7 @@ func (r *Resolver) query(ctx context.Context, bundleID string, fronts []string) 
 				res.Version = l.Version
 				res.FileSize = l.FileSize
 				res.ArtworkURL = l.ArtworkURL
+				res.ReleaseDate = l.ReleaseDate
 			}
 		}
 	}

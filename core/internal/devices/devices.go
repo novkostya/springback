@@ -45,6 +45,9 @@ type App struct {
 	StoreVersion string `json:"store_version,omitempty"`
 	// StoreSize is the download size the store reports, in bytes. Zero for a delisted app.
 	StoreSize int64 `json:"store_size,omitempty"`
+	// StoreUpdated is when the version the store now sells was released. Empty for a delisted
+	// app, which has no listing to date.
+	StoreUpdated string `json:"store_updated,omitempty"`
 	// InLibrary — already downloaded, so the button says so instead of offering to fetch the
 	// same ~500 MB again.
 	InLibrary bool `json:"in_library"`
@@ -296,6 +299,7 @@ func (s *Service) Apps(ctx context.Context, udid string) (DeviceApps, error) {
 			a.Status, a.Checked, a.Errors = res.Status, res.Checked, res.Errors
 			a.StoreVersion = res.Version
 			a.StoreSize = res.FileSize
+			a.StoreUpdated = res.ReleaseDate
 			// The receipt's id wins: it is the id of the app INSTALLED HERE. A
 			// storefront match is a good cross-check but can name a different edition.
 			if a.AppID == 0 {

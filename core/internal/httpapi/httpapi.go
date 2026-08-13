@@ -746,6 +746,7 @@ func (s *Server) lookup(w http.ResponseWriter, r *http.Request) {
 		"status":  res.Status,
 		"version": res.Version,
 		"size":    res.FileSize,
+		"updated": res.ReleaseDate,
 		"errors":  res.Errors,
 	})
 }

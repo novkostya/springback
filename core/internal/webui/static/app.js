@@ -259,6 +259,16 @@ const fmtSize = (n) => {
 };
 const fmtDate = (s) => (s ? new Date(s).toLocaleString() : "—");
 
+// fmtDay is a date with no clock on it, for facts that ARE a date rather than a moment.
+//
+// The App Store's release date is a day; rendering it as "12/03/2024, 07:00:00" would attach a
+// precision Apple never claimed and put a meaningless 07:00 in a table people read at a glance.
+const fmtDay = (s) => {
+  if (!s) return "";
+  const d = new Date(s);
+  return isNaN(d) ? "" : d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+};
+
 // ago is a coarse "how long since", for evidence rather than for logs.
 //
 // COARSE ON PURPOSE. This says how old a remembered app list is, and the honest resolution for
@@ -937,18 +947,17 @@ function appsBlock(udid, d, payload) {
   // SEARCH, because two hundred rows is past what scrolling answers. Filtered here rather than
   // by re-asking the server: the whole list is already in hand and a round trip per keystroke
   // would be slower and worse.
-  const search = el("input", {
-    type: "search", className: "search", id: "app-search",
-    placeholder: `Search ${total} apps`, value: appFilter,
-    autocapitalize: "none", autocorrect: "off", spellcheck: false,
-  });
-  search.oninput = () => {
-    appFilter = search.value;
-    // Only the list is redrawn, so the field keeps focus and the caret stays put — a full
-    // re-render would drop the keyboard on a phone after every letter.
-    drawAppList(udid, apps, $("#app-list"), $("#app-count"));
-  };
-  out.push(el("div", { className: "search-wrap" }, [search]));
+  out.push(searchField({
+    id: "app-search",
+    placeholder: `Search ${total} apps`,
+    value: appFilter,
+    oninput: (v) => {
+      appFilter = v;
+      // Only the list is redrawn, so the field keeps focus and the caret stays put — a full
+      // re-render would drop the keyboard on a phone after every letter.
+      drawAppList(udid, apps, $("#app-list"), $("#app-count"));
+    },
+  }));
   out.push(el("p", { className: "hint", id: "app-count" }));
 
   const list = el("div", { className: "list", id: "app-list" });
@@ -962,6 +971,43 @@ function appsBlock(udid, d, payload) {
 //
 // aria-hidden, because a screen reader announcing six rows of nothing is worse than silence — the
 // sentence above it already says what is happening.
+// searchField is every search box in the app: the input, and the ⊗ that empties it.
+//
+// ONE HELPER BECAUSE THERE ARE TWO OF THEM, and a clear button on one search box but not the
+// other is the kind of difference nobody reports and everybody notices.
+//
+// THE NATIVE ONE IS NOT ENOUGH, which is why this exists at all. `input[type=search]` gets a clear
+// button from WebKit on a Mac and NOTHING on iOS — where the whole app is used — so the field had
+// no way to be emptied but selecting the text and deleting it, one-handed, on a phone. The native
+// button is hidden rather than left to appear beside this one on desktop.
+//
+// `oninput` gets the VALUE rather than the event, so the caller cannot accidentally depend on the
+// element and keep a reference to a node that a redraw has replaced.
+function searchField({ id, placeholder, value, oninput }) {
+  const input = el("input", {
+    type: "search", className: "search", id,
+    placeholder, value: value || "",
+    autocapitalize: "none", autocorrect: "off", spellcheck: false,
+  });
+  const clear = el("button", {
+    className: "search-clear", type: "button", title: "Clear search",
+    "aria-label": "Clear search", textContent: "✕",
+  });
+  const sync = () => { clear.hidden = !input.value; };
+
+  input.oninput = () => { sync(); oninput(input.value); };
+  clear.onclick = () => {
+    input.value = "";
+    sync();
+    oninput("");
+    // FOCUS STAYS, because the reader tapped this field's own accessory: they are clearing it to
+    // type something else, and taking the keyboard away would make them tap the field again.
+    input.focus();
+  };
+  sync();
+  return el("div", { className: "search-wrap" }, [input, clear]);
+}
+
 function appsSkeleton() {
   const row = (title, sub) => el("div", { className: "row" }, [
     el("div", { className: "sk sk-icon" }),
@@ -1072,6 +1118,18 @@ function renderAppDetail() {
   const onDevice = (a && a.disk_usage) || 0;
   if (storeSize > 0) fact("Download", fmtSize(storeSize));
   if (onDevice > 0) fact("On device", fmtSize(onDevice));
+
+  // WHEN THE STORE LAST MOVED, which is the other half of "your copy is behind". A version number
+  // one step back means something different if the store updated last week or in 2019 — the second
+  // is an app nobody is maintaining, and the copy on this box may be the final one.
+  //
+  // Two sources, matching the two ways this screen is reached: from a device the app record
+  // carries it, from the Library nothing does and it comes from the lookup this page already
+  // makes for the version. ABSENT FOR A DELISTED APP, and the row simply does not appear —
+  // there is no listing left to have a date, and inventing "unknown" would add a row that says
+  // nothing to the one screen where the absence is itself the point.
+  const storeUpdated = (a && a.store_updated) || (lookedUp && lookedUp.updated) || "";
+  if (storeUpdated) fact("Store updated", fmtDay(storeUpdated));
 
   if (item) {
     fact("Downloaded", fmtDate(item.downloaded_at));
@@ -1644,28 +1702,30 @@ async function refreshOwned() {
 // per keystroke over wifi is worse than one 200ms late.
 function renderApps() {
   const root = $("#screen-apps");
-  const search = el("input", {
-    type: "search", className: "search", id: "owned-search",
-    placeholder: "Search by name or bundle id", value: ownedQ,
-    autocapitalize: "none", autocorrect: "off", spellcheck: false,
+  const search = searchField({
+    id: "owned-search",
+    placeholder: "Search by name or bundle id",
+    value: ownedQ,
+    oninput: (v) => {
+      ownedQ = v;
+      clearTimeout(ownedTimer);
+      ownedTimer = setTimeout(async () => {
+        await refreshOwned();
+        renderApps();
+        // Put the caret back where it was: this redraw replaces the input the user is typing
+        // in. Skipped when the box was emptied, so clearing on a phone does not summon the
+        // keyboard back onto a list the reader is trying to look at.
+        const box = $("#owned-search");
+        if (box && v) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+      }, 200);
+    },
   });
-  search.oninput = () => {
-    ownedQ = search.value;
-    clearTimeout(ownedTimer);
-    ownedTimer = setTimeout(async () => {
-      await refreshOwned();
-      renderApps();
-      // Put the caret back where it was: this redraw replaces the input the user is typing in.
-      const box = $("#owned-search");
-      if (box) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
-    }, 200);
-  };
 
   const blocks = [
     el("h2", { className: "screen", textContent: "Apps" }),
     el("p", { className: "screen-hint", textContent:
       "Every app springback has seen on your devices — including the ones that are not here now." }),
-    el("div", { className: "search-wrap" }, [search]),
+    search,
   ];
 
   if (!owned) {
@@ -1788,6 +1848,7 @@ function detailFromOwned(udid, bundle) {
     app: {
       bundle_id: a.bundle_id, name: a.name, store_name: a.name,
       version: seen && seen.version, store_status: a.store_status,
+      store_updated: a.store_updated,
       app_id: a.app_id, in_library: a.in_library,
     },
   };
