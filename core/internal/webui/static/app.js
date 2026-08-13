@@ -1745,8 +1745,43 @@ function renderApps() {
     },
   });
 
+  // RESCAN IS BESIDE THE HEADING, exactly where the device page puts Refresh, because it is the
+  // same gesture one level up: that one re-asks a device, this one re-asks every device that is
+  // here. It belongs at the top rather than under the list — unlike the Devices screen's Refresh,
+  // which sits below because the list is what that screen is for and the button is rare. Here the
+  // list is a remembered thing, and "is this still true" is the question people arrive with.
+  const rescan = el("button", { className: "link plain", type: "button", textContent: "Rescan" });
+  rescan.onclick = async () => {
+    if (rescan.disabled) return;
+    rescan.disabled = true;
+    rescan.textContent = "Rescanning…";
+    try {
+      const res = await api("/api/apps/rescan", { method: "POST" });
+      const r = res.rescan || {};
+      owned = res;
+      renderApps();
+      // SAY WHAT IT REACHED, AND WHY IT DID NOT REACH THE REST. Devices that are elsewhere
+      // cannot be rescanned, and this screen exists precisely because some of them are — so a
+      // silent refresh would imply it had asked all of them. "Not paired" is called out
+      // separately because that device IS here and one tap on its own page fixes it.
+      toast([
+        `Rescanned ${r.scanned || 0} device${r.scanned === 1 ? "" : "s"}`,
+        r.away ? `${r.away} not here` : "",
+        r.unpaired ? `${r.unpaired} not paired` : "",
+        (r.failed || []).length ? `${r.failed.length} did not answer` : "",
+      ].filter(Boolean).join(" · "));
+    } catch (e) {
+      toast(e.message, true);
+      rescan.disabled = false;
+      rescan.textContent = "Rescan";
+    }
+  };
+
   const blocks = [
-    el("h2", { className: "screen", textContent: "Apps" }),
+    el("div", { className: "detail-head" }, [
+      el("h2", { className: "screen", textContent: "Apps" }),
+      rescan,
+    ]),
     el("p", { className: "screen-hint", textContent:
       "Every app springback has seen on your devices — including the ones that are not here now." }),
     search,

@@ -50,3 +50,34 @@ func filterApps(apps []devices.OwnedApp, q string) []devices.OwnedApp {
 	}
 	return out
 }
+
+// rescanApps asks every reachable device for its app list again, then answers with the fresh union.
+//
+// A POST, because it does something: it opens a lockdown session on every device that is here and
+// rewrites what springback remembers about each. Slow by nature — the same scan the device page
+// waits half a minute for, once per device — which is why the server runs them CONCURRENTLY and
+// the client sends one request rather than walking the list itself.
+func (s *Server) rescanApps(w http.ResponseWriter, r *http.Request) {
+	if s.Devices == nil || s.Devices.Seen == nil {
+		writeErr(w, http.StatusNotFound, "no_history", "This springback is not remembering device app lists.")
+		return
+	}
+
+	owned, res, err := s.Devices.Rescan(r.Context())
+	if err != nil {
+		s.fail(w, err)
+		return
+	}
+	// The result of the scan travels WITH the list, so the button can say what it reached
+	// without a second request — and so it cannot report a count that belongs to a different
+	// scan than the rows on screen.
+	writeJSON(w, http.StatusOK, map[string]any{
+		"apps":         owned.Apps,
+		"devices_seen": owned.DevicesSeen,
+		"last_seen":    owned.LastSeen,
+		"total":        owned.Total,
+		"delisted":     owned.Delisted,
+		"in_library":   owned.InLibrary,
+		"rescan":       res,
+	})
+}

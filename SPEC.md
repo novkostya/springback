@@ -180,6 +180,7 @@ Everything under `/api` needs a session, bar `/api/health` and the auth endpoint
     POST   /api/devices/<udid>/wifi-sync    {enable}
 
     GET    /api/apps?q=<text>               everything seen on any device, ever, + the library
+    POST   /api/apps/rescan                 re-ask every reachable device, then the same answer
 
     GET    /api/library                     list
     POST   /api/library                     {app_id, account_slug}  -> job id

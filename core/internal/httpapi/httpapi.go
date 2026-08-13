@@ -104,6 +104,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/devices/{udid}/icon.png", s.deviceIcon)
 
 	mux.HandleFunc("GET /api/apps", s.ownedApps)
+	mux.HandleFunc("POST /api/apps/rescan", s.rescanApps)
 	mux.HandleFunc("GET /api/library", s.listLibrary)
 	mux.HandleFunc("POST /api/library", s.addLibrary)
 	mux.HandleFunc("DELETE /api/library/{id}", s.deleteLibrary)

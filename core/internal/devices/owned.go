@@ -19,9 +19,11 @@ import (
 	"encoding/json"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/novkostya/springback/core/internal/storefront"
+	"github.com/novkostya/springback/core/internal/tools"
 )
 
 // Sighting is one device's copy of an app.
@@ -228,6 +230,73 @@ func (s *Service) Owned(ctx context.Context) (Owned, error) {
 	})
 	out.Total = len(out.Apps)
 	return out, nil
+}
+
+// Rescan asks every device that is HERE for its app list again, then returns the fresh union.
+//
+// ON THE SERVER, IN ONE REQUEST, rather than as a loop in the browser. A phone that is asked to
+// walk four devices would abandon the walk the moment the reader switched tabs or the screen
+// locked — leaving some devices refreshed and others not, with nothing to say which. This either
+// finishes or reports what it managed.
+//
+// ONLY DEVICES THAT ARE REACHABLE, and the count of the others is returned rather than hidden: a
+// button that claims to refresh everything, on a screen whose whole point is that it remembers
+// devices which are elsewhere, must not imply it reached them.
+func (s *Service) Rescan(ctx context.Context) (Owned, RescanResult, error) {
+	devs, err := s.List(ctx)
+	if err != nil {
+		return Owned{}, RescanResult{}, err
+	}
+
+	var res RescanResult
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	for _, d := range devs {
+		res.Total++
+		// THE TWO REASONS FOR SKIPPING ARE COUNTED SEPARATELY, because they are different
+		// facts and the remedy differs. A device that is elsewhere needs nothing from anyone;
+		// an unpaired device is sitting right here and is skipped ON PURPOSE, since asking it
+		// anything is what raises the Trust prompt — it needs one tap on its own page.
+		// Reporting both as "not here" would be untrue of the second and unhelpful about it.
+		if !d.Reachable {
+			res.Away++
+			continue
+		}
+		if d.Pair == tools.Unpaired {
+			res.Unpaired++
+			continue
+		}
+		wg.Add(1)
+		go func(udid string) {
+			defer wg.Done()
+			// Apps writes the remembered list as a side effect of succeeding, which is
+			// the whole point of calling it here.
+			_, err := s.Apps(ctx, udid)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				res.Failed = append(res.Failed, udid)
+				return
+			}
+			res.Scanned++
+		}(d.UDID)
+	}
+	wg.Wait()
+
+	owned, err := s.Owned(ctx)
+	return owned, res, err
+}
+
+// RescanResult is what the button can honestly say afterwards.
+type RescanResult struct {
+	// Total is every device springback knows of; the rest say what happened to each.
+	Total    int `json:"total"`
+	Scanned  int `json:"scanned"`
+	Away     int `json:"away"`
+	Unpaired int `json:"unpaired"`
+	// Failed are the ones that were here, paired, and still did not answer — a device that
+	// went to sleep mid-scan, usually.
+	Failed []string `json:"failed,omitempty"`
 }
 
 // appName prefers the store's name for an app over the one the device reports.

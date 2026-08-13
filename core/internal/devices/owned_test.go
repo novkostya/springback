@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/novkostya/springback/core/internal/store"
 	"github.com/novkostya/springback/core/internal/storefront"
@@ -31,11 +32,16 @@ func ownedService(t *testing.T) (*Service, *store.AppCache, *store.Library) {
 	dir := t.TempDir()
 	cache := store.NewAppCache(dir)
 	lib := store.NewLibrary(dir + "/library")
+	fake := tools.NewFake()
 	return &Service{
-		Tools:   tools.NewFake(),
-		Seen:    cache,
-		Library: lib,
-		Cache:   store.NewDeviceCache(dir),
+		Tools: fake,
+		Seen:  cache,
+		// A REAL RESOLVER, because Apps requires one — it asks the store about every app it
+		// finds. The Owned tests never reached that path, so the first test to call Rescan
+		// panicked on a nil pointer that production never has: main.go always builds one.
+		Resolver: storefront.NewResolver(fake, time.Hour, nil),
+		Library:  lib,
+		Cache:    store.NewDeviceCache(dir),
 	}, cache, lib
 }
 
@@ -249,5 +255,54 @@ func TestOwnedCarriesWhatTheDetailPageShows(t *testing.T) {
 	}
 	if seen.Storefront != "ru" || seen.DiskUsage != 202<<20 {
 		t.Errorf("sighting = %+v, want the storefront and installed size from the receipt", seen)
+	}
+}
+
+// TestRescanCountsWhatItCouldNotAsk: the button says what it reached, and the two reasons for not
+// reaching a device are different facts with different remedies. A device that is elsewhere needs
+// nothing from anyone; an unpaired device is sitting right here and is skipped ON PURPOSE, because
+// asking it anything is what raises the Trust prompt. Reporting both as "not here" would be untrue
+// of the second and unhelpful about it.
+func TestRescanCountsWhatItCouldNotAsk(t *testing.T) {
+	s, _, _ := ownedService(t)
+
+	_, res, err := s.Rescan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The fake's fixtures are one reachable paired iPhone, one reachable UNPAIRED iPad, and one
+	// that is asleep — which is the point of them.
+	if res.Total != 3 {
+		t.Fatalf("total = %d, want the three fixture devices", res.Total)
+	}
+	if res.Scanned != 1 {
+		t.Errorf("scanned = %d, want the one device that is here and paired", res.Scanned)
+	}
+	if res.Away != 1 {
+		t.Errorf("away = %d, want the sleeping one", res.Away)
+	}
+	if res.Unpaired != 1 {
+		t.Errorf("unpaired = %d, want the iPad — which is here, and deliberately not asked", res.Unpaired)
+	}
+}
+
+// TestRescanRemembersWhatItScanned is the point of the button: one tap fills a screen that was
+// empty, without visiting each device's page.
+func TestRescanRemembersWhatItScanned(t *testing.T) {
+	s, cache, _ := ownedService(t)
+
+	if all, _ := cache.All(); len(all) != 0 {
+		t.Fatalf("started with %d remembered devices, want none", len(all))
+	}
+	owned, _, err := s.Rescan(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if owned.Total == 0 {
+		t.Fatal("rescan returned no apps")
+	}
+	all, _ := cache.All()
+	if len(all) != 1 {
+		t.Errorf("remembered %d devices, want the one it scanned", len(all))
 	}
 }
