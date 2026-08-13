@@ -1799,15 +1799,29 @@ async function refreshOwned() {
   }
 }
 
-// SEARCH IS A SERVER ROUND TRIP, unlike the per-device list which filters what it already holds.
-// This list spans every device ever seen, so the phone would be filtering a payload it did not
-// need — and the phone is usually the slowest thing in the room. Debounced, because a round trip
-// per keystroke over wifi is worse than one 200ms late.
-function renderApps() {
+// THE HEAD OF THIS SCREEN IS BUILT ONCE AND IS NEVER REBUILT — the heading, Rescan, the hint and
+// the search box. Every later render replaces only the part BELOW it.
+//
+// That is one fix for two reported symptoms, because they share a cause. The screen used to be
+// assembled whole on every render, so the search input was a brand-new element each time: anybody
+// typing while a render landed lost the focus, the caret, and on a phone the keyboard, mid-word.
+// An earlier attempt papered over that by re-focusing the fresh field afterwards, which cannot
+// work on iOS — focus() outside a user gesture does not bring the keyboard back, so it shut
+// anyway, and the caret jumped to the end of the word. The only reliable fix is to not replace the
+// field the reader is standing in.
+//
+// It also stops the page moving under a reader who has scrolled: the list below may grow, shrink
+// or turn into an empty state, but nothing above the fold is touched, so the scroll offset keeps
+// meaning what it meant.
+function appsScaffold() {
   const root = $("#screen-apps");
-  // Recorded BEFORE the rebuild, because the element that holds the focus is about to be
-  // replaced and document.activeElement will be <body> by the time the new one is in place.
-  typingHere = document.activeElement === $("#owned-search");
+  const existing = $("#apps-body");
+  if (existing && root.contains(existing)) return existing;
+
+  // SEARCH IS A SERVER ROUND TRIP, unlike the per-device list which filters what it already holds.
+  // This list spans every device ever seen, so the phone would be filtering a payload it did not
+  // need — and the phone is usually the slowest thing in the room. Debounced, because a round trip
+  // per keystroke over wifi is worse than one 200ms late.
   const search = searchField({
     id: "owned-search",
     placeholder: "Search by name or bundle id",
@@ -1818,8 +1832,6 @@ function renderApps() {
       ownedTimer = setTimeout(async () => {
         await refreshOwned();
         renderApps();
-        // The caret is restored by renderApps itself now — see keepTyping, which covers this
-        // redraw and the one that lands when the first load finishes.
       }, 200);
     },
   });
@@ -1830,6 +1842,10 @@ function renderApps() {
   // which sits below because the list is what that screen is for and the button is rare. Here the
   // list is a remembered thing, and "is this still true" is the question people arrive with.
   const rescan = el("button", { className: "link plain", type: "button", textContent: "Rescan" });
+  // IT RESETS ITSELF NOW. While the whole screen was rebuilt on every render, a fresh button
+  // arrived to replace this one and the reset came free; a button that outlives the render has to
+  // put itself back or it reads "Rescanning…" forever after the first, successful, scan.
+  const done = () => { rescan.disabled = false; rescan.textContent = "Rescan"; };
   rescan.onclick = async () => {
     if (rescan.disabled) return;
     rescan.disabled = true;
@@ -1851,12 +1867,13 @@ function renderApps() {
       ].filter(Boolean).join(" · "));
     } catch (e) {
       toast(e.message, true);
-      rescan.disabled = false;
-      rescan.textContent = "Rescan";
+    } finally {
+      done();
     }
   };
 
-  const blocks = [
+  const body = el("div", { id: "apps-body" });
+  root.replaceChildren(
     el("div", { className: "detail-head" }, [
       el("h2", { className: "screen", textContent: "Apps" }),
       rescan,
@@ -1864,7 +1881,14 @@ function renderApps() {
     el("p", { className: "screen-hint", textContent:
       "Every app springback has seen on your devices — including the ones that are not here now." }),
     search,
-  ];
+    body,
+  );
+  return body;
+}
+
+function renderApps() {
+  const root = appsScaffold();
+  const blocks = [];
 
   if (!owned) {
     // THE SAME SHIMMER THE DEVICE PAGE USES, and the same helper rather than a copy of it: two
@@ -1919,33 +1943,7 @@ function renderApps() {
 
   blocks.push(el("div", { className: "list" }, apps.map(ownedRow)));
   root.replaceChildren(...blocks);
-  keepTyping();
 }
-
-// keepTyping carries focus and the caret across a redraw of this screen.
-//
-// THE SCREEN REPLACES ITS OWN SEARCH BOX. Every render builds a fresh input, so anyone typing
-// while a render lands loses the focus, the caret and — on a phone — the keyboard, mid-word. The
-// debounced search already restored it after a search; this covers the other render, the one that
-// arrives when the first load finishes, which is a real window on a slow link: tap the tab, start
-// typing, and the list arrives on top of you.
-//
-// Chromium found it by accident. A probe read the computed style of the input it had just focused
-// and got nothing back, because the node had been REPLACED and Chromium returns an empty style for
-// a detached element — the same defect seen from the outside.
-function keepTyping() {
-  const box = $("#owned-search");
-  if (!box || !ownedQ) return;
-  // Only when the reader was already in the field. Focusing it otherwise would open the keyboard
-  // on a phone for somebody who had merely opened the tab.
-  if (!typingHere) return;
-  box.focus();
-  box.setSelectionRange(box.value.length, box.value.length);
-}
-
-// typingHere records whether the search box had the focus when the render started, since the
-// element that held it is gone by the time the new one is in the document.
-let typingHere = false;
 
 function ownedRow(a) {
   const here = (a.devices || []).find((d) => d.here);
@@ -2281,16 +2279,28 @@ async function renderRoute(url, { traverse = false } = {}) {
   }
 
   if (route.screen === "apps") {
-    // FETCHED BEFORE THE SCREEN IS SHOWN, on the way in, because this list is not part of the
-    // device poll: it is a read of what the box remembers, and nothing else refreshes it.
+    // THE FETCH IS NOT AWAITED, AND THAT IS THE WHOLE POINT. This handler is what the Navigation
+    // API is intercepting, and scroll is applied when the handler's promise RESOLVES — so
+    // awaiting a read of every remembered device meant the navigation stayed open for a second or
+    // two, and the reader who scrolled down in the meantime was yanked back to the top when it
+    // finally landed. Reported exactly that way: open Apps, scroll, and a couple of seconds later
+    // it jumps. The browser's own reset and startAtTop() were both firing late; nothing here was
+    // waiting on the fetch to draw a first screen anyway, since renderApps() shows the shimmer.
+    //
+    // Every other screen already worked like this — the device page fires loadDeviceState() and
+    // returns — and this one was the odd one out.
     showScreen("apps");
     renderApps();
-    if (!traverse || stale.has("apps")) {
-      await refreshOwned();
-      stale.delete("apps");
-      renderApps();
-    }
     if (!traverse) startAtTop();
+    if (!traverse || stale.has("apps")) {
+      stale.delete("apps");
+      refreshOwned().then(() => {
+        // Only draw it if it is still what the reader is looking at; otherwise leave it marked
+        // stale, so the screen is rebuilt on the way back in rather than under a different one.
+        if (current === "apps") renderApps();
+        else stale.add("apps");
+      });
+    }
     return;
   }
 
