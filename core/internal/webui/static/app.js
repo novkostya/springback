@@ -1702,6 +1702,9 @@ async function refreshOwned() {
 // per keystroke over wifi is worse than one 200ms late.
 function renderApps() {
   const root = $("#screen-apps");
+  // Recorded BEFORE the rebuild, because the element that holds the focus is about to be
+  // replaced and document.activeElement will be <body> by the time the new one is in place.
+  typingHere = document.activeElement === $("#owned-search");
   const search = searchField({
     id: "owned-search",
     placeholder: "Search by name or bundle id",
@@ -1712,11 +1715,8 @@ function renderApps() {
       ownedTimer = setTimeout(async () => {
         await refreshOwned();
         renderApps();
-        // Put the caret back where it was: this redraw replaces the input the user is typing
-        // in. Skipped when the box was emptied, so clearing on a phone does not summon the
-        // keyboard back onto a list the reader is trying to look at.
-        const box = $("#owned-search");
-        if (box && v) { box.focus(); box.setSelectionRange(box.value.length, box.value.length); }
+        // The caret is restored by renderApps itself now — see keepTyping, which covers this
+        // redraw and the one that lands when the first load finishes.
       }, 200);
     },
   });
@@ -1781,7 +1781,33 @@ function renderApps() {
 
   blocks.push(el("div", { className: "list" }, apps.map(ownedRow)));
   root.replaceChildren(...blocks);
+  keepTyping();
 }
+
+// keepTyping carries focus and the caret across a redraw of this screen.
+//
+// THE SCREEN REPLACES ITS OWN SEARCH BOX. Every render builds a fresh input, so anyone typing
+// while a render lands loses the focus, the caret and — on a phone — the keyboard, mid-word. The
+// debounced search already restored it after a search; this covers the other render, the one that
+// arrives when the first load finishes, which is a real window on a slow link: tap the tab, start
+// typing, and the list arrives on top of you.
+//
+// Chromium found it by accident. A probe read the computed style of the input it had just focused
+// and got nothing back, because the node had been REPLACED and Chromium returns an empty style for
+// a detached element — the same defect seen from the outside.
+function keepTyping() {
+  const box = $("#owned-search");
+  if (!box || !ownedQ) return;
+  // Only when the reader was already in the field. Focusing it otherwise would open the keyboard
+  // on a phone for somebody who had merely opened the tab.
+  if (!typingHere) return;
+  box.focus();
+  box.setSelectionRange(box.value.length, box.value.length);
+}
+
+// typingHere records whether the search box had the focus when the render started, since the
+// element that held it is gone by the time the new one is in the document.
+let typingHere = false;
 
 function ownedRow(a) {
   const here = (a.devices || []).find((d) => d.here);

@@ -763,7 +763,12 @@ body { padding-top: var(--header-h); }
   -webkit-appearance: none;
   appearance: none;
 }
-.search:focus { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* NO CUSTOM FOCUS RING. It used to draw an accent-coloured one, which made the search box the
+   only input in the app that did not focus the way the platform focuses things: reported as
+   "search field selection appears orange whereas other inputs are blue", with the Apple ID field
+   beside it wearing Safari's blue.
+   Every other input here is left to the browser — the same decision as `color-scheme: dark`, which
+   is what makes the controls look native in the first place. The search box now is too. */
 
 /* THE NATIVE CLEAR BUTTON IS HIDDEN, NOT RELIED ON. WebKit draws one for input[type=search] on a
    Mac and none at all on iOS, which is where this app is actually used — so the field had no way
@@ -791,5 +796,6 @@ body { padding-top: var(--header-h); }
   cursor: pointer;
 }
 .search-clear:hover { color: var(--ink); }
-.search-clear:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; border-radius: var(--radius); }
+/* Left to the browser as well, so the field and its own button agree with each other. */
+.search-clear:focus-visible { outline-offset: -4px; border-radius: var(--radius); }
 .search-clear[hidden] { display: none; }
