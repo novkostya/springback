@@ -470,7 +470,16 @@ function renderDevices() {
 
   const root = $("#screen-devices");
   const frag = [
-    el("h2", { className: "screen", textContent: "Devices" }),
+    // THE ACTION SITS BESIDE THE HEADING, on every screen that has one. This one used to live
+    // under the list, on the reasoning that the list is what the screen is for and an action bar
+    // above it would push the content down to serve a rare button. That reasoning was fine in
+    // isolation and wrong once there were three of these: the device page and the Apps tab both
+    // put theirs top-right, so the odd one out made the reader hunt. Reported with an arrow drawn
+    // from the button to where it should be.
+    el("div", { className: "detail-head" }, [
+      el("h2", { className: "screen", textContent: "Devices" }),
+      rescanButton(),
+    ]),
     el("p", {
       className: "screen-hint",
       textContent: "Tap a device for its apps, pairing and Wi-Fi sync.",
@@ -496,20 +505,14 @@ function renderDevices() {
   root.replaceChildren(...frag);
 }
 
-// rescanFoot is the Refresh under the list, and the sentence next to it that says what Refresh
-// cannot do.
+// rescanButton asks the same question the watcher asks every five seconds, immediately.
 //
-// WHAT IT ACTUALLY DOES is ask the same question the watcher asks every five seconds, immediately.
 // That is the whole of springback's power over the matter: it does not own the USB bus and never
 // has — it runs `idevice_id` and believes the answer. The case where a device is plugged in and
-// genuinely absent is a muxer that has given up on the port, and no button here can fix it. Saying
-// so is worth more than the button: it is the difference between one restart and half an hour of
-// tapping Refresh.
-//
-// BELOW THE LIST, NOT ABOVE IT. The list is what the screen is for and it should be the first
-// thing under the heading; an action bar above it would push the content down on every visit to
-// serve the rare one.
-function rescanFoot() {
+// genuinely absent is a muxer that has given up on the port, and no button here can fix it. Which
+// is why the sentence under the list matters more than the button does: it is the difference
+// between one restart and half an hour of tapping Refresh.
+function rescanButton() {
   const b = el("button", { className: "link plain", type: "button", textContent: "Refresh" });
   b.onclick = async () => {
     if (b.disabled) return;
@@ -526,9 +529,18 @@ function rescanFoot() {
     b.disabled = false;
     b.textContent = "Refresh";
   };
+  return b;
+}
 
+// rescanFoot is what Refresh CANNOT do, and it stays under the list now that the button has moved
+// up to the heading.
+//
+// IT READS THE SAME WITHOUT THE BUTTON BESIDE IT, which is why it could stay: it is about the list
+// rather than about the control, and the muxer sentence is the useful half. Moving it up with the
+// button would have pushed four device rows down the page to make room for a paragraph nobody
+// needs twice.
+function rescanFoot() {
   return el("div", { className: "list-foot" }, [
-    b,
     el("p", { className: "hint", textContent:
       "This list keeps itself up to date. If a device you have just plugged in is still missing, " +
       "the muxer is the thing to restart — springback asks it what is connected and cannot make it " +
