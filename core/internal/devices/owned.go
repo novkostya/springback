@@ -25,11 +25,20 @@ import (
 )
 
 // Sighting is one device's copy of an app.
+//
+// PER-INSTALLATION FACTS LIVE HERE, NOT ON THE APP. The same app on two devices can have been
+// bought by different Apple IDs, from different storefronts, and it occupies different space on
+// each — so these belong to the copy, not to the listing. The distinction is not academic: the
+// Archive button downloads with the account named on the RECEIPT, and offering the wrong one
+// fails with "license not found".
 type Sighting struct {
-	UDID       string    `json:"udid"`
-	DeviceName string    `json:"device_name,omitempty"`
-	Version    string    `json:"version,omitempty"`
-	SeenAt     time.Time `json:"seen_at"`
+	UDID         string    `json:"udid"`
+	DeviceName   string    `json:"device_name,omitempty"`
+	Version      string    `json:"version,omitempty"`
+	OwnerAppleID string    `json:"owner_apple_id,omitempty"`
+	Storefront   string    `json:"storefront,omitempty"`
+	DiskUsage    int64     `json:"disk_usage,omitempty"`
+	SeenAt       time.Time `json:"seen_at"`
 	// Here reports whether that device is reachable RIGHT NOW. It is the difference between
 	// "you can install this in a moment" and "this is remembered from an iPad that is not
 	// here", and the screen would be misleading without it.
@@ -42,9 +51,18 @@ type OwnedApp struct {
 	Name     string            `json:"name"`
 	AppID    int64             `json:"app_id,omitempty"`
 	Status   storefront.Status `json:"store_status,omitempty"`
-	// StoreUpdated is when the store version was last released, as of the sighting that
-	// recorded it. A store fact rather than a device one, and one that moves slowly.
-	StoreUpdated string `json:"store_updated,omitempty"`
+	// The rest of what the STORE says about this app, as of the sighting that recorded it.
+	// These are properties of the listing rather than of any one copy, so they sit here.
+	//
+	// THEY ARE CARRIED SO THE DETAIL PAGE IS THE SAME PAGE whichever list it was opened from.
+	// Reported: opened from a device it showed the developer, the owning Apple ID, the storefront
+	// and the installed size; opened from here it showed three rows and defaulted the download to
+	// the wrong account.
+	Artist       string   `json:"artist,omitempty"`
+	StoreVersion string   `json:"store_version,omitempty"`
+	StoreSize    int64    `json:"store_size,omitempty"`
+	StoreUpdated string   `json:"store_updated,omitempty"`
+	Checked      []string `json:"checked,omitempty"`
 	// InLibrary and LibraryID are recomputed live rather than read from the remembered list:
 	// archiving an app is the one thing the user does that changes this answer, and a screen
 	// that told them it had not worked would be worse than one that never mentioned it.
@@ -117,7 +135,11 @@ func (s *Service) Owned(ctx context.Context) (Owned, error) {
 			}
 			o := byBundle[a.BundleID]
 			if o == nil {
-				o = &OwnedApp{BundleID: a.BundleID, Name: appName(a), Status: a.Status, StoreUpdated: a.StoreUpdated}
+				o = &OwnedApp{
+					BundleID: a.BundleID, Name: appName(a), Status: a.Status,
+					Artist: a.Artist, StoreVersion: a.StoreVersion,
+					StoreSize: a.StoreSize, StoreUpdated: a.StoreUpdated, Checked: a.Checked,
+				}
 				byBundle[a.BundleID] = o
 			}
 			// THE FIRST NON-ZERO ID WINS AND IS NEVER OVERWRITTEN. It comes from a
@@ -131,7 +153,9 @@ func (s *Service) Owned(ctx context.Context) (Owned, error) {
 			}
 			o.Devices = append(o.Devices, Sighting{
 				UDID: dev.UDID, DeviceName: name, Version: a.Version,
-				SeenAt: dev.SeenAt, Here: here[dev.UDID],
+				OwnerAppleID: a.OwnerAppleID, Storefront: a.Storefront,
+				DiskUsage: a.DiskUsage,
+				SeenAt:    dev.SeenAt, Here: here[dev.UDID],
 			})
 		}
 	}

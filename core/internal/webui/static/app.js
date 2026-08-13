@@ -1177,14 +1177,20 @@ function renderAppDetail() {
   // that is installed somewhere can be asked of the device itself. The archive wins when both
   // exist because it is on local disk and needs no device to be awake — and because it is the
   // flat store artwork, which matches the library list this screen is usually reached from.
+  // ASK THE COPY THAT CAN ANSWER. Opened from Apps, the URL names whichever device sorted first,
+  // which may be one springback will not talk to — an unpaired iPad answers nothing, so the hero
+  // fell back to a monogram for an app whose icon another device had. `acting` is the copy this
+  // page is about; the route is only how it was addressed.
+  const iconFrom = (detail.acting && detail.acting.udid) || (detail.device && detail.device.udid);
+  const iconVersion = (detail.acting && detail.acting.version) || (a && a.version);
   const heroIcon = item
     ? appIcon(item.id, title, "lg", item.downloaded_at)
-    : (a && detail.device
-        ? deviceIcon(detail.device.udid, a.bundle_id, a.version, title, "lg")
+    : (a && iconFrom
+        ? deviceIcon(iconFrom, a.bundle_id, iconVersion, title, "lg")
         : null);
   const hero = heroIcon ? el("div", { className: "detail-hero" }, [heroIcon, head]) : head;
 
-  const blocks = [back, hero, el("dl", { className: "facts" }, facts)];
+  const blocks = [back, hero, el("dl", { className: "facts" }, facts), sightingsBlock()];
 
   if (a && a.store_status === "delisted") {
     blocks.push(el("p", { className: "note warn-note" }, [
@@ -1202,9 +1208,27 @@ function renderAppDetail() {
   // --- archive ---
   if (!item) {
     if (appID) {
-      const owner = a && a.owner_apple_id;
+      // THE OWNER COMES FROM THE COPY BEING ACTED ON. From a device that is the app record; from
+      // the Apps screen it is the copy chosen there, which prefers a device that is here.
+      const owner = (a && a.owner_apple_id) || (detail.acting && detail.acting.owner_apple_id) || "";
       const match = owner && accounts.find((acc) => acc.email.toLowerCase() === owner.toLowerCase());
+
+      // WHEN THE COPIES DISAGREE, SAY SO. The same app can be bought under different Apple IDs on
+      // different devices — 82 of the 201 multi-device apps in the library this was measured
+      // against — and the download works only with the one that owns it. Picking silently would
+      // send somebody to "license not found" with nothing on screen to explain it.
+      const owners = [...new Set(((detail.sightings) || [])
+        .map((s) => s.owner_apple_id).filter(Boolean))];
+      const split = owners.length > 1 ? el("p", { className: "note warn-note" }, [
+        `This app was bought with more than one Apple ID: ${owners.join(", ")}. `,
+        `The download only works with the one that owns the copy you want — `,
+        `${owner || owners[0]} is the account for the copy on `,
+        (detail.acting && sightingLabel(detail.acting, detail.sightings || [])) || "the device chosen above",
+        ".",
+      ]) : null;
+
       blocks.push(el("div", { className: "actions-block" }, [
+        split,
         el("p", { className: "hint", textContent:
           owner
             ? (match
@@ -1816,10 +1840,16 @@ function ownedRow(a) {
   // WHERE IT LIVES, in the sub-line, because that is the fact this screen adds over the device
   // page: the same app on a phone in your hand and on an iPad in a drawer are different
   // situations, and only one of them can be acted on right now.
+  // NAMING ONE DEVICE WHEN THERE ARE SEVERAL IS A GUESS THE ROW CANNOT SUPPORT. Two thirds of the
+  // apps in the library this was measured against are on more than one device, and two of those
+  // devices share a name — so "on alina-iphone" was both incomplete and ambiguous. A count is the
+  // honest summary at this width; the detail page lists them.
+  const all = a.devices || [];
   let where;
   if (a.archived_only) where = "archived here · on no device";
-  else if (here) where = `on ${here.device_name || "a device that is here"}`;
-  else if (seen) where = `${seen.device_name || "a device"} · last seen ${ago(seen.seen_at)}`;
+  else if (all.length > 1) where = `on ${all.length} devices` + (here ? "" : ` · last seen ${ago(seen.seen_at)}`);
+  else if (here) where = `on ${sightingLabel(here, all)}`;
+  else if (seen) where = `${sightingLabel(seen, all)} · last seen ${ago(seen.seen_at)}`;
   else where = a.bundle_id;
 
   // `?from=apps` IS IN THE URL RATHER THAN IN A CLICK HANDLER, and that is a fix rather than a
@@ -1859,6 +1889,52 @@ function ownedRow(a) {
   return row;
 }
 
+// sightingsBlock lists every copy of this app, one row per device.
+//
+// THIS IS WHAT THE APPS SCREEN KNOWS THAT A DEVICE PAGE CANNOT. A device page shows the copy in
+// front of it; this shows all of them, including copies on hardware that is not here — which for
+// most apps is the interesting part. Measured on a real library: 201 of 309 apps are on more than
+// one device.
+//
+// It is also the honest home for the facts that differ between copies. Of those 201, eighty-two
+// disagree about the owning Apple ID, forty-five about the version and forty-one about the
+// storefront, so a single "Version" row at the top of this page would be a claim about the app
+// that is false for at least one of the devices it is on.
+function sightingsBlock() {
+  const list = (detail && detail.sightings) || [];
+  if (list.length < 2) return null;
+
+  const rows = list.map((s) => el("div", { className: "row static" }, [
+    el("div", { className: "row-main" }, [
+      el("div", { className: "row-title", textContent: sightingLabel(s, list) }),
+      el("div", { className: "row-sub", textContent: [
+        s.version, s.disk_usage ? fmtSize(s.disk_usage) : "", s.owner_apple_id,
+      ].filter(Boolean).join(" · ") }),
+    ]),
+    el("div", { className: "row-right" }, [
+      el("span", { className: `pill ${s.here ? "" : "offline"}`,
+        textContent: s.here ? "here" : ago(s.seen_at) }),
+    ]),
+  ]));
+
+  return el("div", {}, [
+    el("h3", { className: "sub-head", textContent: "On these devices" }),
+    el("div", { className: "list" }, rows),
+  ]);
+}
+
+// sightingLabel names a device unambiguously.
+//
+// TWO DEVICES CAN SHARE A NAME, and in the library this was measured against, two do: both phones
+// are called "alina-iphone". A list of copies that named them identically would be a list the
+// reader cannot act on. The suffix is the tail of the udid, matching what the back button does.
+function sightingLabel(s, all) {
+  const name = s.device_name || s.udid;
+  const twice = all.filter((o) => (o.device_name || o.udid) === name).length > 1
+    || devices.filter((o) => (o.name || o.udid) === name).length > 1;
+  return twice && s.udid ? `${name} · ${s.udid.slice(-6)}` : name;
+}
+
 // detailFromOwned builds the detail view's data for an app the reader picked on this screen.
 //
 // NEEDED BECAUSE THE DEVICE MAY NOT BE HERE. The detail route normally reads the device's live scan
@@ -1871,15 +1947,57 @@ function detailFromOwned(udid, bundle) {
   const seen = (a.devices || []).find((d) => d.udid === udid) || (a.devices || [])[0];
   const dev = devices.find((d) => d.udid === udid)
     || { udid, name: (seen && seen.device_name) || "" };
+  // EVERYTHING THE DEVICE'S OWN LIST WOULD HAVE PUT HERE. This used to build a stub of six
+  // fields, so the same app showed the developer, the owning Apple ID, the storefront and its
+  // installed size when opened from a device, and three rows when opened from Apps.
+  //
+  // The account was the part that actually cost something: the Archive button defaults to the
+  // Apple ID on the RECEIPT, and without owner_apple_id it defaulted to whichever account came
+  // first — a download that fails with "license not found" for a reason the screen had not shown.
+  // ONE COPY IS CHOSEN FOR THE ACTIONS, and WHICH one is the difference between a download that
+  // works and one that does not.
+  //
+  // The Archive button downloads with the Apple ID on that copy's receipt, so the first rule is
+  // that the copy's owner must be an account signed in here — otherwise the page offers a button
+  // whose only outcome is "license not found". "Is the device here" comes second: it breaks the
+  // tie between two usable copies, and it is worth nothing on its own.
+  //
+  // Caught by the fixtures doing what a household does: the iPad's copy is here and belongs to
+  // the other Apple ID, the iPhone's belongs to the one signed in. Preferring "here" alone chose
+  // the iPad and told the reader the download would fail.
+  const list = a.devices || [];
+  const usable = (s) => s.owner_apple_id
+    && accounts.some((acc) => acc.email.toLowerCase() === s.owner_apple_id.toLowerCase());
+  const preferred = list.find((s) => usable(s) && s.here)
+    || list.find(usable)
+    || list.find((s) => s.here)
+    || list[0];
+  const many = list.length > 1;
+
   return {
     device: dev,
     from: "apps",
+    // Every copy, for the block that lists them. The union is the thing this screen knows and a
+    // device page cannot.
+    sightings: a.devices || [],
     app: {
       bundle_id: a.bundle_id, name: a.name, store_name: a.name,
-      version: seen && seen.version, store_status: a.store_status,
-      store_updated: a.store_updated,
       app_id: a.app_id, in_library: a.in_library,
+      store_status: a.store_status, checked: a.checked,
+      artist: a.artist,
+      store_version: a.store_version, store_size: a.store_size, store_updated: a.store_updated,
+      // FROM ONE COPY, AND ONLY WHEN THERE IS ONLY ONE. Measured on a real library: 201 of 309
+      // apps are on more than one device, and of those 82 disagree about the owning Apple ID, 45
+      // about the version and 41 about the storefront. Printing one copy's answer as though it
+      // were the app's would be wrong more often than right — so with several copies these move
+      // into the per-device block below, where each belongs to the device it came from.
+      version: many ? "" : (preferred && preferred.version),
+      owner_apple_id: many ? "" : (preferred && preferred.owner_apple_id),
+      storefront: many ? "" : (preferred && preferred.storefront),
+      disk_usage: many ? 0 : (preferred && preferred.disk_usage),
     },
+    // The copy the buttons act on, whether or not it is the only one.
+    acting: preferred,
   };
 }
 

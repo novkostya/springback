@@ -199,3 +199,55 @@ func writeLibraryItem(t *testing.T, lib *store.Library, id int64, bundleID, name
 		t.Fatal(err)
 	}
 }
+
+// TestOwnedCarriesWhatTheDetailPageShows: the app page is reached from a device list and from the
+// Apps list, and it must be the same page either way.
+//
+// Reported with two screenshots of one app: from a device it showed the developer, the owning
+// Apple ID, the storefront and the installed size; from Apps it showed three rows. The owner is
+// the one that cost something rather than merely looking thin — the Archive button downloads with
+// the account on the RECEIPT, so without it the page offers an Apple ID that does not own the app
+// and the download fails with "license not found".
+func TestOwnedCarriesWhatTheDetailPageShows(t *testing.T) {
+	s, cache, _ := ownedService(t)
+	remember(t, cache, "PHONE", "alina-iphone", []App{{
+		InstalledApp: tools.InstalledApp{
+			BundleID: "ru.mobile.timob", Name: "TIMOB", Version: "4.9.1",
+			AppID: 6469694058, StoreName: "TIMOB: sim, call recorder",
+			Artist: "T-MOB, LLC", OwnerAppleID: "novikova.a.o@example.com",
+			Storefront: "ru", DiskUsage: 202 << 20,
+		},
+		Status: storefront.Available, StoreVersion: "4.9.2", StoreSize: 180 << 20,
+		StoreUpdated: "2025-04-02T07:00:00Z", Checked: []string{"ru", "us"},
+	}})
+
+	owned, err := s.Owned(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := owned.Apps[0]
+
+	// Facts about the LISTING live on the app.
+	for _, tc := range []struct{ name, got, want string }{
+		{"artist", a.Artist, "T-MOB, LLC"},
+		{"store version", a.StoreVersion, "4.9.2"},
+		{"store updated", a.StoreUpdated, "2025-04-02T07:00:00Z"},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s = %q, want %q", tc.name, tc.got, tc.want)
+		}
+	}
+	if a.StoreSize != 180<<20 || len(a.Checked) != 2 {
+		t.Errorf("store size/checked = %d/%v, want the values from the scan", a.StoreSize, a.Checked)
+	}
+
+	// Facts about the COPY live on the sighting, because two devices can disagree about all
+	// three: bought by different Apple IDs, from different storefronts, occupying different space.
+	seen := a.Devices[0]
+	if seen.OwnerAppleID != "novikova.a.o@example.com" {
+		t.Errorf("owner = %q, want the receipt's — the Archive button defaults to it", seen.OwnerAppleID)
+	}
+	if seen.Storefront != "ru" || seen.DiskUsage != 202<<20 {
+		t.Errorf("sighting = %+v, want the storefront and installed size from the receipt", seen)
+	}
+}

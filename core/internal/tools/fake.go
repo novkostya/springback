@@ -75,6 +75,9 @@ func NewFake() *Fake {
 	// The Apple ID every receipt names. A placeholder: the fixture is about the SHAPE of a
 	// receipt, not about whose account it came from.
 	const owner = "owner@example.com"
+	// A SECOND APPLE ID IN THE HOUSE, because that is what the receipts on a real family's devices
+	// look like — and it is what the download picker has to get right.
+	const partner = "partner@example.com"
 
 	f := &Fake{
 		devices: map[string]*fakeDevice{
@@ -138,11 +141,22 @@ func NewFake() *Fake {
 				{BundleID: "com.example.sideloaded", Version: "0.9", Name: "Sideloaded Thing"},
 			},
 			asleep: {},
+			// THE SAME APPS AS THE PHONE, BOUGHT BY SOMEBODY ELSE AND AT A DIFFERENT VERSION.
+			//
+			// A household iPad is not a copy of the phone, and the difference is the case the Apps
+			// screen exists to get right. Measured on a real four-device library: 201 of 309 apps
+			// are on more than one device, and of those EIGHTY-TWO were bought under a different
+			// Apple ID on different devices, forty-five sit at different versions, forty-one came
+			// from different storefronts.
+			//
+			// A fixture where every copy agrees cannot show any of that, and worse, cannot fail
+			// when the code guesses: the wrong Apple ID in the download picker looks identical to
+			// the right one until Apple answers "license not found".
 			ipad: {
-				{BundleID: "com.google.ios.youtube", Version: "21.31.3", Name: "YouTube",
-					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: owner, Storefront: "ru"},
+				{BundleID: "com.google.ios.youtube", Version: "20.44.1", Name: "YouTube",
+					AppID: 544007664, StoreName: "YouTube", OwnerAppleID: partner, Storefront: "ae"},
 				{BundleID: "com.burbn.boomerang", Version: "1.8", Name: "Boomerang",
-					AppID: 6744684419, StoreName: "Boomerang from Instagram", OwnerAppleID: owner, Storefront: "ru"},
+					AppID: 6744684419, StoreName: "Boomerang from Instagram", OwnerAppleID: partner, Storefront: "ru"},
 			},
 		},
 		store: map[string]map[string]int64{
