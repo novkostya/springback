@@ -39,9 +39,9 @@ func main() {
 
 	fs := flag.NewFlagSet("springback", flag.ExitOnError)
 	listen := fs.String("listen", env("SPRINGBACK_LISTEN", ":8971"), "listen address")
-	libraryDir := fs.String("library", env("SPRINGBACK_LIBRARY", "/library"), "library directory")
-	accountsDir := fs.String("accounts", env("SPRINGBACK_ACCOUNTS", "/accounts"), "accounts directory")
-	lockdownDir := fs.String("lockdown", env("SPRINGBACK_LOCKDOWN", "/var/lib/lockdown"), "pairing records, mounted read-only")
+	libraryDir := fs.String("library", env("SPRINGBACK_LIBRARY", defaultLibrary), "library directory")
+	accountsDir := fs.String("accounts", env("SPRINGBACK_ACCOUNTS", defaultAccounts), "accounts directory")
+	lockdownDir := fs.String("lockdown", env("SPRINGBACK_LOCKDOWN", defaultLockdown), "pairing records, mounted read-only")
 	muxAddr := fs.String("mux", os.Getenv("USBMUXD_SOCKET_ADDRESS"), "muxer address, e.g. 127.0.0.1:27015 for netmuxd; empty uses libimobiledevice's default unix socket")
 	cacheTTL := fs.Duration("cache-ttl", 7*24*time.Hour, "how long a store verdict stays cached")
 	fake := fs.Bool("fake", os.Getenv("SPRINGBACK_FAKE") != "", "use the fake tool layer (no hardware, no Apple)")

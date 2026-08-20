@@ -10,3 +10,6 @@
 # first commit went out without it and built fine, because the Docker build has its own copy of
 # the tree — nothing surfaced the omission until a clean checkout was tried.
 /springback
+
+# macOS bundle output (deploy/macos/bundle.sh).
+/build/

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -73,15 +74,19 @@ func (r *Real) run(ctx context.Context, timeout time.Duration, env []string, std
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, name, args...)
-	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin"}, env...)
+	bin, err := resolveTool(name)
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append([]string{toolPATH}, env...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}
 	var buf bytes.Buffer
 	cmd.Stdout = &buf
 	cmd.Stderr = &buf
-	err := cmd.Run()
+	err = cmd.Run()
 	out := buf.String()
 	if err != nil {
 		// sanitize only on the path where the text becomes a MESSAGE. The raw output is
@@ -287,8 +292,12 @@ func (r *Real) InstallApp(ctx context.Context, udid, ipaPath string, onProgress 
 	ctx, cancel := context.WithTimeout(ctx, r.InstallTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ideviceinstaller", append(r.netFlag(udid), "-u", udid, "install", ipaPath)...)
-	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin"}, r.deviceEnv()...)
+	bin, err := resolveTool("ideviceinstaller")
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, bin, append(r.netFlag(udid), "-u", udid, "install", ipaPath)...)
+	cmd.Env = append([]string{toolPATH}, r.deviceEnv()...)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -373,8 +382,12 @@ func (r *Real) AuthLogin(ctx context.Context, home, passphrase, email, password,
 		args = append(args, "--auth-code", authCode)
 	}
 
-	cmd := exec.CommandContext(ctx, "ipatool", args...)
-	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "TERM=dumb"}, ipatoolEnv(home)...)
+	bin, err := resolveTool("ipatool")
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd.Env = append([]string{toolPATH, "TERM=dumb"}, ipatoolEnv(home)...)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -486,13 +499,13 @@ func (r *Real) AuthLogin(ctx context.Context, home, passphrase, email, password,
 // disableEcho turns off terminal echo on the pty, best-effort.
 func disableEcho(f *os.File) {
 	var t unix.Termios
-	raw, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
+	raw, err := unix.IoctlGetTermios(int(f.Fd()), ioctlGetTermios)
 	if err != nil {
 		return
 	}
 	t = *raw
 	t.Lflag &^= unix.ECHO
-	_ = unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, &t)
+	_ = unix.IoctlSetTermios(int(f.Fd()), ioctlSetTermios, &t)
 }
 
 // scrubSecret removes a secret from text that is about to be shown to somebody.
@@ -601,13 +614,17 @@ func (r *Real) Download(ctx context.Context, home, passphrase string, appID int6
 	ctx, cancel := context.WithTimeout(ctx, r.DownloadTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ipatool", "download",
+	bin, err := resolveTool("ipatool")
+	if err != nil {
+		return DownloadResult{}, err
+	}
+	cmd := exec.CommandContext(ctx, bin, "download",
 		"-i", fmt.Sprintf("%d", appID),
 		"-o", outPath,
 		"--keychain-passphrase", passphrase)
 	// TERM matters: ipatool's progress library renders differently, or not at all, without
 	// one. `xterm` is a safe, universally understood value.
-	cmd.Env = append([]string{"PATH=/usr/local/bin:/usr/bin:/bin", "TERM=xterm"}, ipatoolEnv(home)...)
+	cmd.Env = append([]string{toolPATH, "TERM=xterm"}, ipatoolEnv(home)...)
 
 	ptmx, err := pty.Start(cmd)
 	if err != nil {
@@ -839,4 +856,28 @@ func (r *Real) Lookup(ctx context.Context, bundleID, country string) StoreLookup
 		}
 	}
 	return res
+}
+
+// resolveTool turns a tool's name into the absolute path of the file that will actually be run.
+//
+// IT EXISTS BECAUSE cmd.Env DOES NOT DECIDE THE LOOKUP. exec.Command resolves a bare name against
+// THIS process's $PATH, immediately, before cmd.Env is ever consulted — so setting a PATH in the
+// child's environment changes what the child sees and nothing at all about which file is executed.
+//
+// On Linux the difference was invisible: the image installs every tool where the inherited PATH
+// already points, so both PATHs agreed by accident. In a macOS .app they do not agree — the tools
+// sit beside the binary, in a directory only toolPATH knows about, and a launched app inherits
+// whatever PATH the launcher had. The symptom is "executable file not found in $PATH" naming a
+// file that is present, executable, and on the PATH the error just printed.
+func resolveTool(name string) (string, error) {
+	for _, dir := range strings.Split(strings.TrimPrefix(toolPATH, "PATH="), ":") {
+		if dir == "" {
+			continue
+		}
+		p := filepath.Join(dir, name)
+		if st, err := os.Stat(p); err == nil && !st.IsDir() && st.Mode()&0o111 != 0 {
+			return p, nil
+		}
+	}
+	return "", fmt.Errorf("%s: not found in %s", name, strings.TrimPrefix(toolPATH, "PATH="))
 }

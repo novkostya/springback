@@ -68,6 +68,11 @@ gates-go: tc-go ## Go: gofmt + vet + golangci-lint + go test -race
 	    golangci-lint run; \
 	    go test -race -cover ./...'
 
+.PHONY: app
+app: ## macOS only: assemble build/springback.app (see deploy/macos/NOTES.md)
+	@test "$$(uname -s)" = "Darwin" || { echo "ERROR: make app builds a macOS bundle and must run on a Mac."; exit 1; }
+	./deploy/macos/bundle.sh
+
 .PHONY: fmt
 fmt: tc-go ## Go: gofmt -w + go mod tidy (run after editing core)
 	$(RUN) -w /src/core $(TC_GO) sh -euc 'gofmt -w . && go mod tidy'
