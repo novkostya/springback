@@ -2119,6 +2119,22 @@ function detailFromOwned(udid, bundle) {
 
 async function refreshLibrary() {
   try { library = await api("/api/library"); } catch { /* shown on the screen */ }
+  // AND RE-POINT THE OPEN DETAIL SCREEN AT THE RECORD IT IS SHOWING. `detail.item` is the object
+  // captured when the row was tapped, and this line has just replaced every record with a new
+  // one — so a re-render after a download draws from the snapshot taken BEFORE it started. The
+  // router rebuilds `detail` from `library`, but only on navigation, and a finished job calls
+  // dataChanged() rather than navigating.
+  //
+  // Reported: archiving a newer version from the App Store left the banner offering an update
+  // that had already happened, and every device row saying "up to date" against the old version.
+  // Reloading the page fixed it, which is the tell — the data was right and the screen was not.
+  //
+  // A missing id means the item was deleted underneath, and keeping the last known record is
+  // what the screen already does for that case.
+  if (detail && detail.item) {
+    const fresh = library.find((i) => i.id === detail.item.id);
+    if (fresh) detail.item = fresh;
+  }
 }
 
 function renderLibrary() {
